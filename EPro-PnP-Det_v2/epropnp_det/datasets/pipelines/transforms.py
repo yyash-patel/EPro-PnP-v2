@@ -380,3 +380,43 @@ class MinIoURandomCrop3D(MinIoURandomCrop):
                         results[key] = dense[patch[1]:patch[3],
                                              patch[0]:patch[2]]
                 return results
+
+@PIPELINES.register_module()
+class Pad3DInt(Pad):
+
+    @staticmethod
+    def _pad_dense(results):
+        padding_kwargs_img = dict(padding_mode='edge')
+        padding_kwargs_mask = dict(padding_mode='constant', pad_val=0)
+        results['img_dense_x2d'] = mmcv.impad(
+                    results['img_dense_x2d'], shape=results['pad_shape'][:2], **padding_kwargs_img)
+        results['img_dense_x2d_mask'] = mmcv.impad(
+                    results['img_dense_x2d_mask'], shape=results['pad_shape'][:2], **padding_kwargs_mask)
+    def __call__(self, results):
+        results = super().__call__(results)
+        self._pad_dense(results)
+        return results
+    
+def crop_3dInt(results, crop_box):
+    crop_x1, crop_y1, crop_x2, crop_y2 = crop_box
+    # crop the image
+    img = results['img']
+    img = img[crop_y1:crop_y2,:]
+    
+    # img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
+    img_shape = img.shape
+    results['img'] = img
+    results['img_shape'] = img_shape
+
+    results['img_dense_x2d'] = results['img_dense_x2d'][crop_y1:crop_y2, crop_x1:crop_x2]
+    results['img_dense_x2d_mask'] = results['img_dense_x2d_mask'][crop_y1:crop_y2, crop_x1:crop_x2]
+    
+    return results
+
+@PIPELINES.register_module()
+class Crop3DInt(object):
+    def __init__(self, crop_box,
+              ):
+        self.crop_box = crop_box
+    def __call__(self, results):
+        return crop_3dInt(results, self.crop_box)
