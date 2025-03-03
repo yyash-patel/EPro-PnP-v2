@@ -6,7 +6,7 @@ import cv2
 from scipy.spatial.transform import Rotation as R
 
 @DATASETS.register_module()
-class Intersection(CustomDataset):
+class Intersection3ddataset(CustomDataset):
     CLASSES = ('car', 'taxi')  # Include other vehicle types as necessary
     extrinsic = np.eye(4)
     # rotation = np.array([[0.719   ,   - 0.0043,    -0.69],
@@ -76,7 +76,7 @@ class Intersection(CustomDataset):
                 mask_occlusion = f"/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2/{extracted_name}_{class_cat}_occlusion.png"
                 mask_occlusion = cv2.imread(mask_occlusion)
                 iou = self.compute_mask_overlap(mask_full,mask_occlusion)
-                if iou > 0.8:
+                if iou > 0.9:
                     if class_cat[:3] in ('Car', 'Pol', 'Jee', 'Tax'):
                         label_id = 0
                         # gt_labels.append(0)  

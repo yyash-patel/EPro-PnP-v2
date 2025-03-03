@@ -26,25 +26,25 @@ class EProPnPDet(SingleStageDetector):
         super(EProPnPDet, self).__init__(*args, **kwargs)
         self.CLS_ORIENTATION = cls_orientation
 
-    # def forward_train(self,
-    #                   img,
-    #                   img_metas,
-    #                   gt_bboxes,
-    #                   depth=None,
-    #                   **kwargs):
-    #     super(SingleStageDetector, self).forward_train(img, img_metas)
-    #     x = self.extract_feat(img)
-    #     losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes, **kwargs)
-    #     return losses
-    
     def forward_train(self,
                       img,
                       img_metas,
+                      gt_bboxes,
+                      depth=None,
                       **kwargs):
         super(SingleStageDetector, self).forward_train(img, img_metas)
         x = self.extract_feat(img)
-        losses = self.bbox_head.forward_train(x, img_metas, **kwargs)
+        losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes, **kwargs)
         return losses
+    
+    # def forward_train(self,
+    #                   img,
+    #                   img_metas,
+    #                   **kwargs):
+    #     super(SingleStageDetector, self).forward_train(img, img_metas)
+    #     x = self.extract_feat(img)
+    #     losses = self.bbox_head.forward_train(x, img_metas, **kwargs)
+    #     return losses
     
     def simple_test(self, img, img_metas, rescale=False, **kwargs):
         with default_timers['backbone time']:

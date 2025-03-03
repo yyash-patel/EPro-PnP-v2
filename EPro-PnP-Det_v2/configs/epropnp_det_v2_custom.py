@@ -172,7 +172,7 @@ model = dict(
         mc_scoring_ratio=0.0,  # 1.0 for Monte Carlo scoring
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
-dataset_type = 'Intersection'
+dataset_type = 'Intersection3ddataset'
 data_root = 'data/int_2/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -230,7 +230,7 @@ data = dict(
         ann_file='train.json',
         pipeline=train_pipeline,
         data_root=data_root,
-        img_prefix='/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2',
+        img_prefix='/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2',
         filter_empty_gt=True),
     val=dict(
         type='NuScenes3DDataset',
