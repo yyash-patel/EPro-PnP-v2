@@ -26,25 +26,25 @@ class EProPnPDet(SingleStageDetector):
         super(EProPnPDet, self).__init__(*args, **kwargs)
         self.CLS_ORIENTATION = cls_orientation
 
-    def forward_train(self,
-                      img,
-                      img_metas,
-                      gt_bboxes,
-                      depth=None,
-                      **kwargs):
-        super(SingleStageDetector, self).forward_train(img, img_metas)
-        x = self.extract_feat(img)
-        losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes, **kwargs)
-        return losses
-    
     # def forward_train(self,
     #                   img,
     #                   img_metas,
+    #                   gt_bboxes,
+    #                   depth=None,
     #                   **kwargs):
     #     super(SingleStageDetector, self).forward_train(img, img_metas)
     #     x = self.extract_feat(img)
-    #     losses = self.bbox_head.forward_train(x, img_metas, **kwargs)
+    #     losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes, **kwargs)
     #     return losses
+    
+    def forward_train(self,
+                      img,
+                      img_metas,
+                      **kwargs):
+        super(SingleStageDetector, self).forward_train(img, img_metas)
+        x = self.extract_feat(img)
+        losses = self.bbox_head.forward_train(x, img_metas, **kwargs)
+        return losses
     
     def simple_test(self, img, img_metas, rescale=False, **kwargs):
         with default_timers['backbone time']:
@@ -149,22 +149,22 @@ class EProPnPDet(SingleStageDetector):
                 mmcv.imwrite(img_pred_3d, out_file[:-4] + '_3d.jpg')
             if 'bev' in views:
                 mmcv.imwrite(viz_bev, out_file[:-4] + '_bev.png')
-            if '2d' in views:
-                assert 'bbox_results' in result
-                multi_cls_results = np.concatenate(result['bbox_results'], axis=0)
-                labels = []
-                for i, bbox_single in enumerate(result['bbox_results']):
-                    labels += [i] * bbox_single.shape[0]
-                labels = np.array(labels)
-                imshow_det_bboxes(
-                    ori_img,
-                    multi_cls_results,
-                    labels,
-                    class_names=self.CLASSES,
-                    score_thr=score_thr,
-                    thickness=thickness,
-                    show=False,
-                    out_file=out_file[:-4] + '_2d.jpg')
+            # if '2d' in views:
+            #     assert 'bbox_results' in result
+            #     multi_cls_results = np.concatenate(result['bbox_results'], axis=0)
+            #     labels = []
+            #     for i, bbox_single in enumerate(result['bbox_results']):
+            #         labels += [i] * bbox_single.shape[0]
+            #     labels = np.array(labels)
+            #     imshow_det_bboxes(
+            #         ori_img,
+            #         multi_cls_results,
+            #         labels,
+            #         class_names=self.CLASSES,
+            #         score_thr=score_thr,
+            #         thickness=thickness,
+            #         show=False,
+            #         out_file=out_file[:-4] + '_2d.jpg')
             if 'score' in views:
                 assert 'score' in result
                 score = result['score'][:, :img.shape[0], :img.shape[1]].sum(axis=0)

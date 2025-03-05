@@ -773,408 +773,54 @@ class DeformPnPHead(BaseDenseHead):
             value, rois, (rh, rw), spatial_scale, 0, 'avg', True)
         return x2d_roi, key_roi, value_roi
 
-    def forward_train(self,
-                      mlvl_feats,
-                      img_metas,
-                      gt_bboxes,
-                      gt_labels=None,
-                      gt_bboxes_ignore=None,
-                      gt_bboxes_3d=None,
-                      gt_x3d=None,
-                      gt_x2d=None,
-                      gt_attr=None,
-                      gt_velo=None,
-                      img_dense_x2d=None,
-                      img_dense_x2d_mask=None,
-                      cam_intrinsic=None,
-                      cam_pts_uvz=None,
-                      img_transform=None):
-        # ===== prepare img metas and g.t. =====
-        device = mlvl_feats[0].device
-        cam_intrinsic = torch.stack(cam_intrinsic, dim=0)
-        img_transform = torch.stack(img_transform, dim=0)
-        img_shapes = cam_intrinsic.new_tensor([img_meta['img_shape'][:2] for img_meta in img_metas])
-        ori_shapes = cam_intrinsic.new_tensor([img_meta['ori_shape'][:2] for img_meta in img_metas])
-        img_flips = cam_intrinsic.new_tensor(
-            [img_meta['flip'] for img_meta in img_metas], dtype=torch.bool)
-
-        gt_bboxes_ = torch.cat(gt_bboxes, dim=0)
-        gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
-        gt_labels_ = torch.cat(gt_labels, dim=0)
-        img_dense_x2d_small = F.avg_pool2d(img_dense_x2d, self.output_stride, self.output_stride)
-        img_dense_x2d_mask_small = F.avg_pool2d(img_dense_x2d_mask, self.output_stride, self.output_stride)
-
-        gt_img_inds = []
-        for i, gt_bboxes_3d_single in enumerate(gt_bboxes_3d):
-            gt_img_inds += [i] * gt_bboxes_3d_single.size(0)
-        gt_img_inds = torch.tensor(gt_img_inds, device=device, dtype=torch.long)
-
-        # ===== get center targets and filter g.t. boxes =====
-        (centers2d_, gt_bboxes_, centers2d, gt_bboxes,
-         valid_mask, num_obj_per_img) = self.center_target.get_centers_2d(
-            gt_bboxes_, gt_bboxes_3d_, gt_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
-            cam_intrinsic, ori_shapes.max(dim=0)[0])
-
-        gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
-        gt_labels_ = gt_labels_[valid_mask]
-        if self.pred_velo:
-            gt_velo_ = torch.cat(gt_velo, dim=0)[valid_mask]
-        if self.pred_attr:
-            gt_attr_ = torch.cat(gt_attr, dim=0)[valid_mask]
-        if self.loss_regr is not None:
-            assert gt_x3d is not None and gt_x2d is not None
-            gt_x3d_ = []
-            gt_x2d_ = []
-            for gt_x3d_single, gt_x2d_single, valid_mask_single in zip(
-                    list_flatten(gt_x3d), list_flatten(gt_x2d), valid_mask):
-                if valid_mask_single:
-                    gt_x3d_.append(gt_x3d_single)
-                    gt_x2d_.append(gt_x2d_single)
-
-        gt_labels = gt_labels_.split(num_obj_per_img, dim=0)
-        rois = bbox2roi(gt_bboxes)
-        gt_img_inds = rois[:, 0].to(torch.int64)
-        gt_flips_ = img_flips[gt_img_inds]
-
-        # ===== FCOS detector and dense head =====
-        (mlvl_cls_score, mlvl_bbox, mlvl_center, mlvl_centerness, mlvl_obj_emb, mlvl_points,
-         key, value) = self.forward_det_dense(mlvl_feats, img_metas, with_bbox=True)
-
-        # ===== detector loss =====
-        mlvl_labels, mlvl_bbox_targets, mlvl_centerness_targets, mlvl_gt_inds = self.detector.get_targets(
-            mlvl_points, gt_bboxes, gt_labels, centers2d)
-        flatten_cls_scores = torch.cat([
-            cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
-            for cls_score in mlvl_cls_score], dim=0)
-        flatten_bbox = torch.cat([
-            bbox.permute(0, 2, 3, 1).reshape(-1, bbox.size(1))
-            for bbox in mlvl_bbox], dim=0)
-        flatten_center = torch.cat([
-            center.permute(0, 2, 3, 1).reshape(-1, center.size(1))
-            for center in mlvl_center], dim=0)
-        flatten_centerness = torch.cat([
-            centerness.permute(0, 2, 3, 1).reshape(-1)
-            for centerness in mlvl_centerness], dim=0)
-        flatten_obj_emb = torch.cat([
-            obj_emb.permute(0, 2, 3, 1).reshape(-1, self.embed_dims)
-            for obj_emb in mlvl_obj_emb], dim=0)
-        flatten_labels = torch.cat(mlvl_labels, dim=0)
-        flatten_bbox_targets = torch.cat(mlvl_bbox_targets, dim=0)
-        flatten_centerness_targets = torch.cat(mlvl_centerness_targets, dim=0)
-        flatten_gt_inds = torch.cat(mlvl_gt_inds, dim=0)
-        flatten_strides = torch.cat(
-            [torch.full_like(lvl_labels, stride)
-             for lvl_labels, stride in zip(mlvl_labels, self.detector.strides)], dim=0)
-
-        losses = self.detector.loss(  # detector losses
-            flatten_cls_scores,
-            flatten_bbox,
-            flatten_center,
-            flatten_centerness,
-            flatten_labels,
-            flatten_gt_inds,
-            flatten_bbox_targets,
-            flatten_centerness_targets,
-            centers2d_)
-
-        # ===== obj sampling =====
-        num_img = key.size(0)
-        num_obj_samples = getattr(self.train_cfg, 'num_obj_samples_per_img', 48) * num_img
-        fg_mask = flatten_labels < self.num_classes
-        (sample_gt_inds, sample_weights, sample_uniform_weights,
-         obj_emb_samples, center_samples, stride_samples) = obj_sampler(
-            num_obj_samples, fg_mask, flatten_centerness_targets, flatten_gt_inds,
-            flatten_obj_emb, flatten_center, flatten_strides,
-            uniform_mix_ratio=getattr(self.train_cfg, 'uniform_mix_ratio', 0.5))
-        sample_img_inds = gt_img_inds[sample_gt_inds]
-        sample_labels = gt_labels_[sample_gt_inds]
-        ori_shape_samples = ori_shapes[sample_img_inds]
-        cam_intrinsic_samples = cam_intrinsic[sample_img_inds]
-        bbox_3d_targets = gt_bboxes_3d_[sample_gt_inds]  # (num_obj_actual, 7)
-        num_obj_actual = sample_gt_inds.size(0)
-
-        # ===== subheads =====
-        (query_samples, scale, score_pred, dim_pred, dim_decoded, velo, attr,
-         noc, w2d, x2d) = self.forward_subheads(
-            center_samples, obj_emb_samples, key, value,
-            stride_samples, sample_img_inds, sample_labels, img_flips,
-            img_shapes, img_transform)
-
-        # ===== dim loss =====
-        dim_targets = self.dim_coder.encode(
-            bbox_3d_targets[:, :3], sample_labels)  # (num_obj_actual, 3)
-        loss_dim = self.loss_dim(
-            dim_pred, dim_targets,
-            weight=sample_weights[:, None], avg_factor=num_obj_samples * 3)
-
-        # ===== pose loss =====
-        norm_factor = (scale * sample_weights[:, None]).sum() / max(scale.size(0) * 2, 1)
-        self.camera.set_param(cam_intrinsic_samples, img_shape=ori_shape_samples)
-        x3d = noc * dim_decoded[:, None]
-        w2d_scaled = w2d * scale[:, None, :]
-        self.cost_fun.set_param(x2d, w2d_scaled)
-        _, _, _, _, pose_sample_logweights, cost_tgt = self.pnp.monte_carlo_forward(
-            x3d, x2d, w2d_scaled, self.camera, self.cost_fun,
-            pose_init=bbox_3d_targets[:, 3:], force_init_solve=True)
-        loss_pose = self.loss_pose(
-            pose_sample_logweights, cost_tgt, norm_factor,
-            weight=sample_weights,
-            avg_factor=num_obj_samples)
-        losses.update(loss_pose=loss_pose)
-
-        # ===== 3d score loss & derivative regularization loss =====
-        if num_obj_actual > 0:
-            pose_opt, _, _, pose_opt_plus = self.pnp(
-                x3d, x2d, w2d_scaled,
-                self.camera, self.cost_fun,
-                with_pose_opt_plus=self.loss_reg_pos is not None or self.loss_reg_orient is not None)
-            if self.score_type == 'iou':
-                ious = bbox3d_overlaps_aligned_torch(
-                    torch.cat((pose_opt[:, :3], dim_decoded, pose_opt[:, 3:]), dim=-1),
-                    bbox_3d_targets[:, [3, 4, 5, 0, 1, 2, 6]]).reshape(-1)
-                metric = {'mean_iou': (ious * sample_weights).sum() / num_obj_actual}
-                score_targets = (2 * ious - 0.5).clamp(min=0, max=1)
-            else:  # self.score_type == 'te'
-                te = (pose_opt[:, [0, 2]] - bbox_3d_targets[:, [3, 5]]).norm(dim=1)
-                metric = {'ate': (te * sample_weights).sum() / num_obj_actual}
-                score_targets = ((-te.log2() + 2.5) / 4).clamp(min=0, max=1)
-            loss_score = self.loss_score(
-                score_pred, score_targets.detach(),
-                weight=sample_uniform_weights, avg_factor=num_obj_samples)
-            if pose_opt_plus is not None:
-                loss_reg_pos = self.loss_reg_pos(
-                    (pose_opt_plus[:, :3] - bbox_3d_targets[:, 3:6]).norm(dim=-1), -1,
-                    weight=sample_weights, avg_factor=num_obj_samples)
-                loss_reg_orient = self.loss_reg_orient(
-                    pose_opt_plus[:, 3], bbox_3d_targets[:, 6],
-                    weight=sample_weights, avg_factor=num_obj_samples)
-                losses.update({'loss_reg_pos': loss_reg_pos,
-                               'loss_reg_orient': loss_reg_orient})
-        else:
-            if self.score_type == 'iou':
-                metric = {'mean_iou': torch.tensor(0.0, device=device)}
-            else:
-                metric = {'ate': torch.tensor(0.0, device=device)}
-            loss_score = score_pred.sum()
-            if self.loss_reg_pos is not None or self.self.loss_reg_orient is not None:
-                loss_reg_orient = loss_reg_pos = noc.sum() + x2d.sum() + w2d.sum()
-                losses.update({'loss_reg_pos': loss_reg_pos,
-                               'loss_reg_orient': loss_reg_orient})
-        losses.update(metric)
-
-        losses.update({'loss_dim': loss_dim,
-                       'loss_score': loss_score,
-                       'norm_factor': self.loss_pose.norm_factor.detach()})
-
-        # ===== auxiliary loss =====
-        if self.loss_proj is not None or self.loss_regr is not None:
-            # roi sampling
-            gt_active_inds, sample_gt_act_inds = torch.unique(
-                sample_gt_inds, return_inverse=True, sorted=False)
-            num_gt_act = gt_active_inds.size(0)
-            gt_flips_act = gt_flips_[gt_active_inds]
-            gt_bboxes_3d_act = gt_bboxes_3d_[gt_active_inds]
-            gt_img_inds_act = gt_img_inds[gt_active_inds]
-            rois_act = rois[gt_active_inds]
-
-            rh, rw = getattr(self.train_cfg, 'roi_shape', (28, 28))
-            x2d_roi, key_roi, value_roi = self.extract_rois(
-                rois_act, img_dense_x2d, key, value, roi_shape=(rh, rw))
-            # (num_gt_act, 1, rh * rw, 2)
-            x2d_tgt = x2d_roi.reshape(num_gt_act, 1, 2, rh * rw).transpose(-1, -2)
-            cam_intrinsic_gt = cam_intrinsic[gt_img_inds_act]
-            ori_shapes_gt = ori_shapes[gt_img_inds_act]
-
-            # dense regression
-            # (num_gt_act, num_head, rh * rw, 5 or 6)
-            regr_res = self.corr_reg_aux(
-                value_roi.reshape(num_gt_act, self.embed_dims, rh * rw).transpose(-1, -2)
-            ).reshape(num_gt_act, rh * rw, self.num_heads, 5).transpose(2, 1)
-            noc_roi, logstd_roi = regr_res.split([3, 2], dim=-1)
-            noc_roi = noc_roi.clone()
-            noc_roi[gt_flips_act, :, :, 2] = -noc_roi[gt_flips_act, :, :, 2]  # flip correction
-
-            # (num_gt_act, num_obj_actual)
-            sample_to_act = torch.arange(num_gt_act, device=device)[:, None] == sample_gt_act_inds
-            sample_to_act = F.normalize(sample_to_act * sample_weights, p=1, dim=-1)
-            dim_decoded_act = sample_to_act @ dim_decoded.detach()  # (num_gt_act, 3)
-
-            x3d_roi = noc_roi * dim_decoded_act[:, None, None, :]  # (num_gt_act, num_head, rh * rw, 3)
-            x2d_proj = project_to_image(
-                x3d_roi.reshape(num_gt_act, self.num_heads * rh * rw, 3), gt_bboxes_3d_act[:, 3:],
-                cam_intrinsic_gt,
-                ori_shapes_gt,
-                z_min=self.camera.z_min,
-                allowed_border=self.camera.allowed_border
-            ).reshape(num_gt_act, self.num_heads, rh * rw, 2)
-            proj_error = self.proj_error_coder.encode(
-                x2d_proj - x2d_tgt,
-                gt_bboxes_3d_act[:, None, 5:6],
-                gt_bboxes_3d_act[:, None, :3],
-                cam_intrinsic_gt[:, 0, 0, None, None]
-            ).reshape(num_gt_act, self.num_heads, rh, rw, 2)
-            # reprojection loss
-            head_emb_dim = self.embed_dims // self.num_heads
-            query_gt_act = (sample_to_act @ query_samples.flatten(1)).reshape(
-                num_gt_act, self.num_heads, 1, head_emb_dim)
-            # (num_gt_act, num_head, 1, h_out * w_out) = (num_gt_act, num_head, 1, head_emb_dim)
-            # @ (num_gt_act, num_head, head_emb_dim, h_out * w_out)
-            attn_gt_act = query_gt_act @ key_roi.reshape(
-                num_gt_act, self.num_heads, head_emb_dim, rh * rw) / np.sqrt(head_emb_dim)
-            attn_gt_act = attn_gt_act.reshape(num_gt_act, self.num_heads, rh, rw)
-            attn_gt_act_logsoftmax = logsoftmax_across_rois(
-                attn_gt_act, rois_act, extra_dim=1)
-
-            # proj loss
-            if self.loss_proj is not None:
-                losses.update(
-                    {'loss_proj': self.loss_proj(
-                        proj_error, 0,
-                        rois=rois_act,
-                        logstd=logstd_roi.reshape(proj_error.size()),
-                        logmixweight=attn_gt_act_logsoftmax,
-                        avg_factor=max(reduce_mean(proj_error.new_tensor(num_gt_act)), 1.0) * rh * rw)})
-
-            # regr loss
-            if self.loss_regr is not None:
-                x3d_tgt = x2d_roi.new_zeros((num_gt_act, rh * rw, 4))
-                roi_wh = x2d_roi.new_tensor([rw, rh])
-                for i, act_ind in enumerate(gt_active_inds):
-                    gt_x3d_act = gt_x3d_[act_ind]  # (pn, 3)
-                    gt_x3d_act = F.pad(gt_x3d_act, [0, 1], mode='constant', value=1.0)
-                    gt_x2d_act = gt_x2d_[act_ind]  # (pn, 2)
-                    gt_x2dtrans_act = F.pad(gt_x2d_act, [0, 1], mode='constant', value=1.0) \
-                                      @ img_transform[gt_img_inds[act_ind]].transpose(-1, -2)
-                    gt_x2dtrans_act = gt_x2dtrans_act[:, :2] / gt_x2dtrans_act[:, 2:]  # (pn, 2)
-                    gt_x2droi_act = (gt_x2dtrans_act - rois[act_ind, 1:3]) \
-                                    / (rois[act_ind, 3:5] - rois[act_ind, 1:3])
-                    roi_inds = (gt_x2droi_act * roi_wh - 0.5).round().long()  # (pn, 2)
-                    roi_inds = torch.min(roi_inds.clamp(min=0), roi_wh.long() - 1)
-                    roi_inds = roi_inds[:, 1] * rw + roi_inds[:, 0]  # (pn, )
-                    x3d_tgt[i].scatter_(dim=0, index=roi_inds[:, None].expand(-1, 4),
-                                        src=gt_x3d_act, reduce='add')
-                x3d_tgt_weight = x3d_tgt[..., 3].clamp(max=1.0)  # 0, 1 binary mask (num_gt_act, rh * rw)
-                x3d_tgt = x3d_tgt[..., :3] / x3d_tgt[..., 3:].clamp(min=1.0)  # (num_gt_act, rh * rw, 3)
-
-                x3d_error = (x3d_roi.reshape(num_gt_act, self.num_heads, rh, rw, 3)
-                             - x3d_tgt.reshape(num_gt_act, 1, rh, rw, 3)
-                             ) / gt_bboxes_3d_act[:, :3].mean(dim=-1).reshape(num_gt_act, 1, 1, 1, 1)
-                x3d_logweight = attn_gt_act.reshape(
-                    num_gt_act, self.num_heads, rh, rw
-                ).log_softmax(dim=1)
-                losses.update(
-                    {'loss_regr': self.loss_regr(
-                        x3d_error, 0,
-                        logmixweight=x3d_logweight,
-                        weight=x3d_tgt_weight.reshape(num_gt_act, rh, rw),
-                        avg_factor=reduce_mean(x3d_tgt_weight.sum()).clamp(min=1e-4))})
-
-        if self.loss_depth is not None:
-            assert isinstance(cam_pts_uvz, list)
-            hw_img = value.new_tensor(value.shape[-2:]) * self.output_stride
-            sampling_grids = []
-            cam_pts_z = []
-            cam_focal = []
-            for i, cam_pts_uvz_single in enumerate(cam_pts_uvz):
-                cam_pts_uvtrans = F.pad(cam_pts_uvz_single[:, :2], [0, 1], mode='constant', value=1.0) \
-                                  @ img_transform[i].transpose(-1, -2)
-                cam_pts_uvtrans = cam_pts_uvtrans[:, :2] / cam_pts_uvtrans[:, 2:]
-                sampling_grid = cam_pts_uvtrans * (2 / hw_img[[1, 0]]) - 1  # (n, 2)
-                sampling_grids.append(
-                    F.pad(sampling_grid, [0, 1], mode='constant',
-                          value=(i + 0.5) * (2 / num_img) - 1.0))  # (n, 3) in [x, y, img_ind]
-                cam_pts_z.append(cam_pts_uvz_single[:, 2:3])
-                cam_focal.append(cam_pts_uvz_single.new_full(
-                    (cam_pts_uvz_single.size(0), 1),
-                    (cam_intrinsic[i, 0, 0] + cam_intrinsic[i, 1, 1]) / 2))
-            sampling_grids = torch.cat(sampling_grids, dim=0)  # (num_cam_pts, 3)
-            cam_pts_z = torch.cat(cam_pts_z, dim=0)  # (num_cam_pts, 1)
-            cam_focal = torch.cat(cam_focal, dim=0)  # (num_cam_pts, 1)
-            # (1, emb_dim, 1, 1, num_cam_pts) -> (num_cam_pts, emb_dim)
-            v_samples = F.grid_sample(
-                value.expand(1, -1, -1, -1, -1).permute(0, 2, 1, 3, 4),  # (1, emb_dim, num_img, h_out, w_out)
-                sampling_grids.expand(1, 1, 1, -1, -1),  # (1, 1, 1, num_cam_pts, 3)
-                mode='bilinear',
-                padding_mode='border',
-                align_corners=False,
-            ).reshape(self.embed_dims, sampling_grids.size(0)).transpose(-1, -2)
-            depth_pred, depth_weight = self.depth_branch(v_samples).reshape(
-                v_samples.size(0), self.num_depth_modes, 2).unbind(dim=-1)  # (num_cam_pts, num_depth_modes)
-            depth_pred = self.depth_coder.decode(depth_pred, cam_focal)
-            depth_logweight = depth_weight.log_softmax(dim=-1)
-            losses.update(
-                {'loss_depth': self.loss_depth(
-                    depth_pred[..., None], cam_pts_z[..., None],
-                    logmixweight=depth_logweight,
-                    avg_factor=reduce_mean(depth_pred.new_tensor(depth_pred.size(0))).clamp(min=1e-4))})
-
-        # ===== velo & attr loss =====
-        if self.pred_velo:
-            velo_targets = gt_velo_[sample_gt_inds]
-            nan_mask = velo_targets.isnan()
-            velo_targets.masked_fill_(nan_mask, 0.0)
-            velo_weights = sample_weights[:, None] * (~nan_mask)
-            losses.update(
-                {'loss_velo': self.loss_velo(
-                    velo, velo_targets,
-                    weight=velo_weights,
-                    avg_factor=reduce_mean(velo_weights.sum().clamp(min=1.0)))})
-        if self.pred_attr:
-            attr_targets = gt_attr_[sample_gt_inds]
-            losses.update(
-                {'loss_attr': self.loss_attr(
-                    attr, attr_targets, weight=sample_weights, avg_factor=num_obj_samples)})
-        self.save_loss(losses,'loss_nu_scenes.txt')
-        return losses
-    
     # def forward_train(self,
     #                   mlvl_feats,
     #                   img_metas,
-    #                   gt_bboxes_3d,
-    #                   gt_bboxes_2d,
+    #                   gt_bboxes,
     #                   gt_labels=None,
-    #                   gt_center_2d=None,
-    #                   cam_intrinsic=None,
+    #                   gt_bboxes_ignore=None,
+    #                   gt_bboxes_3d=None,
     #                   gt_x3d=None,
     #                   gt_x2d=None,
-    #                   img_transform=None,
+    #                   gt_attr=None,
+    #                   gt_velo=None,
     #                   img_dense_x2d=None,
-    #                   img_dense_x2d_mask=None):
-        
+    #                   img_dense_x2d_mask=None,
+    #                   cam_intrinsic=None,
+    #                   cam_pts_uvz=None,
+    #                   img_transform=None):
     #     # ===== prepare img metas and g.t. =====
     #     device = mlvl_feats[0].device
     #     cam_intrinsic = torch.stack(cam_intrinsic, dim=0)
     #     img_transform = torch.stack(img_transform, dim=0)
-        
     #     img_shapes = cam_intrinsic.new_tensor([img_meta['img_shape'][:2] for img_meta in img_metas])
     #     ori_shapes = cam_intrinsic.new_tensor([img_meta['ori_shape'][:2] for img_meta in img_metas])
+    #     img_flips = cam_intrinsic.new_tensor(
+    #         [img_meta['flip'] for img_meta in img_metas], dtype=torch.bool)
+
+    #     gt_bboxes_ = torch.cat(gt_bboxes, dim=0)
+    #     gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
+    #     gt_labels_ = torch.cat(gt_labels, dim=0)
     #     img_dense_x2d_small = F.avg_pool2d(img_dense_x2d, self.output_stride, self.output_stride)
     #     img_dense_x2d_mask_small = F.avg_pool2d(img_dense_x2d_mask, self.output_stride, self.output_stride)
-        
-    #     gt_bboxes_2d[0] = gt_bboxes_2d[0].view(-1, 4) 
-    #     img_flips = torch.zeros(len(gt_bboxes_2d), dtype=torch.bool)
-    
-    #     gt_bboxes_ = torch.cat(gt_bboxes_2d, dim=0)
-    #     gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
-    #     # gt_center_2d_ = torch.cat(gt_center_2d, dim=0)
-        
-    #     gt_labels_ = torch.cat(gt_labels, dim=0)
-        
+
     #     gt_img_inds = []
     #     for i, gt_bboxes_3d_single in enumerate(gt_bboxes_3d):
     #         gt_img_inds += [i] * gt_bboxes_3d_single.size(0)
     #     gt_img_inds = torch.tensor(gt_img_inds, device=device, dtype=torch.long)
 
     #     # ===== get center targets and filter g.t. boxes =====
-    #     (centers2d_, gt_bboxes_, centers2d, gt_bboxes_2d,
+    #     (centers2d_, gt_bboxes_, centers2d, gt_bboxes,
     #      valid_mask, num_obj_per_img) = self.center_target.get_centers_2d(
     #         gt_bboxes_, gt_bboxes_3d_, gt_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
     #         cam_intrinsic, ori_shapes.max(dim=0)[0])
 
-    #     # num_obj_per_img = [len(gt_labels_)]
     #     gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
     #     gt_labels_ = gt_labels_[valid_mask]
-
+    #     if self.pred_velo:
+    #         gt_velo_ = torch.cat(gt_velo, dim=0)[valid_mask]
+    #     if self.pred_attr:
+    #         gt_attr_ = torch.cat(gt_attr, dim=0)[valid_mask]
     #     if self.loss_regr is not None:
     #         assert gt_x3d is not None and gt_x2d is not None
     #         gt_x3d_ = []
@@ -1184,19 +830,19 @@ class DeformPnPHead(BaseDenseHead):
     #             if valid_mask_single:
     #                 gt_x3d_.append(gt_x3d_single)
     #                 gt_x2d_.append(gt_x2d_single)
-        
+
     #     gt_labels = gt_labels_.split(num_obj_per_img, dim=0)
-    #     rois = bbox2roi(gt_bboxes_2d)
+    #     rois = bbox2roi(gt_bboxes)
     #     gt_img_inds = rois[:, 0].to(torch.int64)
     #     gt_flips_ = img_flips[gt_img_inds]
 
     #     # ===== FCOS detector and dense head =====
     #     (mlvl_cls_score, mlvl_bbox, mlvl_center, mlvl_centerness, mlvl_obj_emb, mlvl_points,
     #      key, value) = self.forward_det_dense(mlvl_feats, img_metas, with_bbox=True)
-       
+
     #     # ===== detector loss =====
     #     mlvl_labels, mlvl_bbox_targets, mlvl_centerness_targets, mlvl_gt_inds = self.detector.get_targets(
-    #         mlvl_points, gt_bboxes_2d, gt_labels, centers2d)
+    #         mlvl_points, gt_bboxes, gt_labels, centers2d)
     #     flatten_cls_scores = torch.cat([
     #         cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
     #         for cls_score in mlvl_cls_score], dim=0)
@@ -1230,7 +876,7 @@ class DeformPnPHead(BaseDenseHead):
     #         flatten_bbox_targets,
     #         flatten_centerness_targets,
     #         centers2d_)
-    
+
     #     # ===== obj sampling =====
     #     num_img = key.size(0)
     #     num_obj_samples = getattr(self.train_cfg, 'num_obj_samples_per_img', 48) * num_img
@@ -1260,7 +906,7 @@ class DeformPnPHead(BaseDenseHead):
     #     loss_dim = self.loss_dim(
     #         dim_pred, dim_targets,
     #         weight=sample_weights[:, None], avg_factor=num_obj_samples * 3)
-    
+
     #     # ===== pose loss =====
     #     norm_factor = (scale * sample_weights[:, None]).sum() / max(scale.size(0) * 2, 1)
     #     self.camera.set_param(cam_intrinsic_samples, img_shape=ori_shape_samples)
@@ -1387,7 +1033,8 @@ class DeformPnPHead(BaseDenseHead):
     #                     rois=rois_act,
     #                     logstd=logstd_roi.reshape(proj_error.size()),
     #                     logmixweight=attn_gt_act_logsoftmax,
-    #                     avg_factor=max(reduce_mean(proj_error.new_tensor(num_gt_act)), 1.0) * rh * rw)})  
+    #                     avg_factor=max(reduce_mean(proj_error.new_tensor(num_gt_act)), 1.0) * rh * rw)})
+
     #         # regr loss
     #         if self.loss_regr is not None:
     #             x3d_tgt = x2d_roi.new_zeros((num_gt_act, rh * rw, 4))
@@ -1421,9 +1068,364 @@ class DeformPnPHead(BaseDenseHead):
     #                     logmixweight=x3d_logweight,
     #                     weight=x3d_tgt_weight.reshape(num_gt_act, rh, rw),
     #                     avg_factor=reduce_mean(x3d_tgt_weight.sum()).clamp(min=1e-4))})
-        
-    #     self.save_loss(losses,'loss_fine_tune.txt')
+
+    #     if self.loss_depth is not None:
+    #         assert isinstance(cam_pts_uvz, list)
+    #         hw_img = value.new_tensor(value.shape[-2:]) * self.output_stride
+    #         sampling_grids = []
+    #         cam_pts_z = []
+    #         cam_focal = []
+    #         for i, cam_pts_uvz_single in enumerate(cam_pts_uvz):
+    #             cam_pts_uvtrans = F.pad(cam_pts_uvz_single[:, :2], [0, 1], mode='constant', value=1.0) \
+    #                               @ img_transform[i].transpose(-1, -2)
+    #             cam_pts_uvtrans = cam_pts_uvtrans[:, :2] / cam_pts_uvtrans[:, 2:]
+    #             sampling_grid = cam_pts_uvtrans * (2 / hw_img[[1, 0]]) - 1  # (n, 2)
+    #             sampling_grids.append(
+    #                 F.pad(sampling_grid, [0, 1], mode='constant',
+    #                       value=(i + 0.5) * (2 / num_img) - 1.0))  # (n, 3) in [x, y, img_ind]
+    #             cam_pts_z.append(cam_pts_uvz_single[:, 2:3])
+    #             cam_focal.append(cam_pts_uvz_single.new_full(
+    #                 (cam_pts_uvz_single.size(0), 1),
+    #                 (cam_intrinsic[i, 0, 0] + cam_intrinsic[i, 1, 1]) / 2))
+    #         sampling_grids = torch.cat(sampling_grids, dim=0)  # (num_cam_pts, 3)
+    #         cam_pts_z = torch.cat(cam_pts_z, dim=0)  # (num_cam_pts, 1)
+    #         cam_focal = torch.cat(cam_focal, dim=0)  # (num_cam_pts, 1)
+    #         # (1, emb_dim, 1, 1, num_cam_pts) -> (num_cam_pts, emb_dim)
+    #         v_samples = F.grid_sample(
+    #             value.expand(1, -1, -1, -1, -1).permute(0, 2, 1, 3, 4),  # (1, emb_dim, num_img, h_out, w_out)
+    #             sampling_grids.expand(1, 1, 1, -1, -1),  # (1, 1, 1, num_cam_pts, 3)
+    #             mode='bilinear',
+    #             padding_mode='border',
+    #             align_corners=False,
+    #         ).reshape(self.embed_dims, sampling_grids.size(0)).transpose(-1, -2)
+    #         depth_pred, depth_weight = self.depth_branch(v_samples).reshape(
+    #             v_samples.size(0), self.num_depth_modes, 2).unbind(dim=-1)  # (num_cam_pts, num_depth_modes)
+    #         depth_pred = self.depth_coder.decode(depth_pred, cam_focal)
+    #         depth_logweight = depth_weight.log_softmax(dim=-1)
+    #         losses.update(
+    #             {'loss_depth': self.loss_depth(
+    #                 depth_pred[..., None], cam_pts_z[..., None],
+    #                 logmixweight=depth_logweight,
+    #                 avg_factor=reduce_mean(depth_pred.new_tensor(depth_pred.size(0))).clamp(min=1e-4))})
+
+    #     # ===== velo & attr loss =====
+    #     if self.pred_velo:
+    #         velo_targets = gt_velo_[sample_gt_inds]
+    #         nan_mask = velo_targets.isnan()
+    #         velo_targets.masked_fill_(nan_mask, 0.0)
+    #         velo_weights = sample_weights[:, None] * (~nan_mask)
+    #         losses.update(
+    #             {'loss_velo': self.loss_velo(
+    #                 velo, velo_targets,
+    #                 weight=velo_weights,
+    #                 avg_factor=reduce_mean(velo_weights.sum().clamp(min=1.0)))})
+    #     if self.pred_attr:
+    #         attr_targets = gt_attr_[sample_gt_inds]
+    #         losses.update(
+    #             {'loss_attr': self.loss_attr(
+    #                 attr, attr_targets, weight=sample_weights, avg_factor=num_obj_samples)})
+    #     self.save_loss(losses,'loss_nu_scenes.txt')
     #     return losses
+    
+    def forward_train(self,
+                      mlvl_feats,
+                      img_metas,
+                      gt_bboxes_3d,
+                      gt_bboxes_2d,
+                      gt_labels=None,
+                      gt_center_2d=None,
+                      cam_intrinsic=None,
+                      gt_x3d=None,
+                      gt_x2d=None,
+                      img_transform=None,
+                      img_dense_x2d=None,
+                      img_dense_x2d_mask=None):
+        
+        # ===== prepare img metas and g.t. =====
+        device = mlvl_feats[0].device
+        cam_intrinsic = torch.stack(cam_intrinsic, dim=0)
+        img_transform = torch.stack(img_transform, dim=0)
+        
+        img_shapes = cam_intrinsic.new_tensor([img_meta['img_shape'][:2] for img_meta in img_metas])
+        ori_shapes = cam_intrinsic.new_tensor([img_meta['ori_shape'][:2] for img_meta in img_metas])
+        img_dense_x2d_small = F.avg_pool2d(img_dense_x2d, self.output_stride, self.output_stride)
+        img_dense_x2d_mask_small = F.avg_pool2d(img_dense_x2d_mask, self.output_stride, self.output_stride)
+        
+        gt_bboxes_2d[0] = gt_bboxes_2d[0].view(-1, 4) 
+        img_flips = torch.zeros(len(gt_bboxes_2d), dtype=torch.bool)
+    
+        gt_bboxes_ = torch.cat(gt_bboxes_2d, dim=0)
+        gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
+        # gt_center_2d_ = torch.cat(gt_center_2d, dim=0)
+        
+        gt_labels_ = torch.cat(gt_labels, dim=0)
+        
+        gt_img_inds = []
+        for i, gt_bboxes_3d_single in enumerate(gt_bboxes_3d):
+            gt_img_inds += [i] * gt_bboxes_3d_single.size(0)
+        gt_img_inds = torch.tensor(gt_img_inds, device=device, dtype=torch.long)
+
+        # ===== get center targets and filter g.t. boxes =====
+        (centers2d_, gt_bboxes_, centers2d, gt_bboxes_2d,
+         valid_mask, num_obj_per_img) = self.center_target.get_centers_2d(
+            gt_bboxes_, gt_bboxes_3d_, gt_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
+            cam_intrinsic, ori_shapes.max(dim=0)[0])
+
+        # num_obj_per_img = [len(gt_labels_)]
+        gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
+        gt_labels_ = gt_labels_[valid_mask]
+
+        if self.loss_regr is not None:
+            assert gt_x3d is not None and gt_x2d is not None
+            gt_x3d_ = []
+            gt_x2d_ = []
+            for gt_x3d_single, gt_x2d_single, valid_mask_single in zip(
+                    list_flatten(gt_x3d), list_flatten(gt_x2d), valid_mask):
+                if valid_mask_single:
+                    gt_x3d_.append(gt_x3d_single)
+                    gt_x2d_.append(gt_x2d_single)
+        
+        gt_labels = gt_labels_.split(num_obj_per_img, dim=0)
+        rois = bbox2roi(gt_bboxes_2d)
+        gt_img_inds = rois[:, 0].to(torch.int64)
+        gt_flips_ = img_flips[gt_img_inds]
+
+        # ===== FCOS detector and dense head =====
+        (mlvl_cls_score, mlvl_bbox, mlvl_center, mlvl_centerness, mlvl_obj_emb, mlvl_points,
+         key, value) = self.forward_det_dense(mlvl_feats, img_metas, with_bbox=True)
+       
+        # ===== detector loss =====
+        mlvl_labels, mlvl_bbox_targets, mlvl_centerness_targets, mlvl_gt_inds = self.detector.get_targets(
+            mlvl_points, gt_bboxes_2d, gt_labels, centers2d)
+        flatten_cls_scores = torch.cat([
+            cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
+            for cls_score in mlvl_cls_score], dim=0)
+        flatten_bbox = torch.cat([
+            bbox.permute(0, 2, 3, 1).reshape(-1, bbox.size(1))
+            for bbox in mlvl_bbox], dim=0)
+        flatten_center = torch.cat([
+            center.permute(0, 2, 3, 1).reshape(-1, center.size(1))
+            for center in mlvl_center], dim=0)
+        flatten_centerness = torch.cat([
+            centerness.permute(0, 2, 3, 1).reshape(-1)
+            for centerness in mlvl_centerness], dim=0)
+        flatten_obj_emb = torch.cat([
+            obj_emb.permute(0, 2, 3, 1).reshape(-1, self.embed_dims)
+            for obj_emb in mlvl_obj_emb], dim=0)
+        flatten_labels = torch.cat(mlvl_labels, dim=0)
+        flatten_bbox_targets = torch.cat(mlvl_bbox_targets, dim=0)
+        flatten_centerness_targets = torch.cat(mlvl_centerness_targets, dim=0)
+        flatten_gt_inds = torch.cat(mlvl_gt_inds, dim=0)
+        flatten_strides = torch.cat(
+            [torch.full_like(lvl_labels, stride)
+             for lvl_labels, stride in zip(mlvl_labels, self.detector.strides)], dim=0)
+
+        losses = self.detector.loss(  # detector losses
+            flatten_cls_scores,
+            flatten_bbox,
+            flatten_center,
+            flatten_centerness,
+            flatten_labels,
+            flatten_gt_inds,
+            flatten_bbox_targets,
+            flatten_centerness_targets,
+            centers2d_)
+    
+        # ===== obj sampling =====
+        num_img = key.size(0)
+        num_obj_samples = getattr(self.train_cfg, 'num_obj_samples_per_img', 48) * num_img
+        fg_mask = flatten_labels < self.num_classes
+        (sample_gt_inds, sample_weights, sample_uniform_weights,
+         obj_emb_samples, center_samples, stride_samples) = obj_sampler(
+            num_obj_samples, fg_mask, flatten_centerness_targets, flatten_gt_inds,
+            flatten_obj_emb, flatten_center, flatten_strides,
+            uniform_mix_ratio=getattr(self.train_cfg, 'uniform_mix_ratio', 0.5))
+        sample_img_inds = gt_img_inds[sample_gt_inds]
+        sample_labels = gt_labels_[sample_gt_inds]
+        ori_shape_samples = ori_shapes[sample_img_inds]
+        cam_intrinsic_samples = cam_intrinsic[sample_img_inds]
+        bbox_3d_targets = gt_bboxes_3d_[sample_gt_inds]  # (num_obj_actual, 7)
+        num_obj_actual = sample_gt_inds.size(0)
+
+        # ===== subheads =====
+        (query_samples, scale, score_pred, dim_pred, dim_decoded, velo, attr,
+         noc, w2d, x2d) = self.forward_subheads(
+            center_samples, obj_emb_samples, key, value,
+            stride_samples, sample_img_inds, sample_labels, img_flips,
+            img_shapes, img_transform)
+
+        # ===== dim loss =====
+        dim_targets = self.dim_coder.encode(
+            bbox_3d_targets[:, :3], sample_labels)  # (num_obj_actual, 3)
+        loss_dim = self.loss_dim(
+            dim_pred, dim_targets,
+            weight=sample_weights[:, None], avg_factor=num_obj_samples * 3)
+    
+        # ===== pose loss =====
+        norm_factor = (scale * sample_weights[:, None]).sum() / max(scale.size(0) * 2, 1)
+        self.camera.set_param(cam_intrinsic_samples, img_shape=ori_shape_samples)
+        x3d = noc * dim_decoded[:, None]
+        w2d_scaled = w2d * scale[:, None, :]
+        self.cost_fun.set_param(x2d, w2d_scaled)
+        _, _, _, _, pose_sample_logweights, cost_tgt = self.pnp.monte_carlo_forward(
+            x3d, x2d, w2d_scaled, self.camera, self.cost_fun,
+            pose_init=bbox_3d_targets[:, 3:], force_init_solve=True)
+        loss_pose = self.loss_pose(
+            pose_sample_logweights, cost_tgt, norm_factor,
+            weight=sample_weights,
+            avg_factor=num_obj_samples)
+        losses.update(loss_pose=loss_pose)
+        print(img_metas)
+        print(x2d)
+        hihu
+        # ===== 3d score loss & derivative regularization loss =====
+        if num_obj_actual > 0:
+            pose_opt, _, _, pose_opt_plus = self.pnp(
+                x3d, x2d, w2d_scaled,
+                self.camera, self.cost_fun,
+                with_pose_opt_plus=self.loss_reg_pos is not None or self.loss_reg_orient is not None)
+            if self.score_type == 'iou':
+                ious = bbox3d_overlaps_aligned_torch(
+                    torch.cat((pose_opt[:, :3], dim_decoded, pose_opt[:, 3:]), dim=-1),
+                    bbox_3d_targets[:, [3, 4, 5, 0, 1, 2, 6]]).reshape(-1)
+                metric = {'mean_iou': (ious * sample_weights).sum() / num_obj_actual}
+                score_targets = (2 * ious - 0.5).clamp(min=0, max=1)
+            else:  # self.score_type == 'te'
+                te = (pose_opt[:, [0, 2]] - bbox_3d_targets[:, [3, 5]]).norm(dim=1)
+                metric = {'ate': (te * sample_weights).sum() / num_obj_actual}
+                score_targets = ((-te.log2() + 2.5) / 4).clamp(min=0, max=1)
+            loss_score = self.loss_score(
+                score_pred, score_targets.detach(),
+                weight=sample_uniform_weights, avg_factor=num_obj_samples)
+            if pose_opt_plus is not None:
+                loss_reg_pos = self.loss_reg_pos(
+                    (pose_opt_plus[:, :3] - bbox_3d_targets[:, 3:6]).norm(dim=-1), -1,
+                    weight=sample_weights, avg_factor=num_obj_samples)
+                loss_reg_orient = self.loss_reg_orient(
+                    pose_opt_plus[:, 3], bbox_3d_targets[:, 6],
+                    weight=sample_weights, avg_factor=num_obj_samples)
+                losses.update({'loss_reg_pos': loss_reg_pos,
+                               'loss_reg_orient': loss_reg_orient})
+        else:
+            if self.score_type == 'iou':
+                metric = {'mean_iou': torch.tensor(0.0, device=device)}
+            else:
+                metric = {'ate': torch.tensor(0.0, device=device)}
+            loss_score = score_pred.sum()
+            if self.loss_reg_pos is not None or self.self.loss_reg_orient is not None:
+                loss_reg_orient = loss_reg_pos = noc.sum() + x2d.sum() + w2d.sum()
+                losses.update({'loss_reg_pos': loss_reg_pos,
+                               'loss_reg_orient': loss_reg_orient})
+        losses.update(metric)
+
+        losses.update({'loss_dim': loss_dim,
+                       'loss_score': loss_score,
+                       'norm_factor': self.loss_pose.norm_factor.detach()})
+
+        # ===== auxiliary loss =====
+        if self.loss_proj is not None or self.loss_regr is not None:
+            # roi sampling
+            gt_active_inds, sample_gt_act_inds = torch.unique(
+                sample_gt_inds, return_inverse=True, sorted=False)
+            num_gt_act = gt_active_inds.size(0)
+            gt_flips_act = gt_flips_[gt_active_inds]
+            gt_bboxes_3d_act = gt_bboxes_3d_[gt_active_inds]
+            gt_img_inds_act = gt_img_inds[gt_active_inds]
+            rois_act = rois[gt_active_inds]
+
+            rh, rw = getattr(self.train_cfg, 'roi_shape', (28, 28))
+            x2d_roi, key_roi, value_roi = self.extract_rois(
+                rois_act, img_dense_x2d, key, value, roi_shape=(rh, rw))
+            # (num_gt_act, 1, rh * rw, 2)
+            x2d_tgt = x2d_roi.reshape(num_gt_act, 1, 2, rh * rw).transpose(-1, -2)
+            cam_intrinsic_gt = cam_intrinsic[gt_img_inds_act]
+            ori_shapes_gt = ori_shapes[gt_img_inds_act]
+
+            # dense regression
+            # (num_gt_act, num_head, rh * rw, 5 or 6)
+            regr_res = self.corr_reg_aux(
+                value_roi.reshape(num_gt_act, self.embed_dims, rh * rw).transpose(-1, -2)
+            ).reshape(num_gt_act, rh * rw, self.num_heads, 5).transpose(2, 1)
+            noc_roi, logstd_roi = regr_res.split([3, 2], dim=-1)
+            noc_roi = noc_roi.clone()
+            noc_roi[gt_flips_act, :, :, 2] = -noc_roi[gt_flips_act, :, :, 2]  # flip correction
+
+            # (num_gt_act, num_obj_actual)
+            sample_to_act = torch.arange(num_gt_act, device=device)[:, None] == sample_gt_act_inds
+            sample_to_act = F.normalize(sample_to_act * sample_weights, p=1, dim=-1)
+            dim_decoded_act = sample_to_act @ dim_decoded.detach()  # (num_gt_act, 3)
+
+            x3d_roi = noc_roi * dim_decoded_act[:, None, None, :]  # (num_gt_act, num_head, rh * rw, 3)
+            x2d_proj = project_to_image(
+                x3d_roi.reshape(num_gt_act, self.num_heads * rh * rw, 3), gt_bboxes_3d_act[:, 3:],
+                cam_intrinsic_gt,
+                ori_shapes_gt,
+                z_min=self.camera.z_min,
+                allowed_border=self.camera.allowed_border
+            ).reshape(num_gt_act, self.num_heads, rh * rw, 2)
+            proj_error = self.proj_error_coder.encode(
+                x2d_proj - x2d_tgt,
+                gt_bboxes_3d_act[:, None, 5:6],
+                gt_bboxes_3d_act[:, None, :3],
+                cam_intrinsic_gt[:, 0, 0, None, None]
+            ).reshape(num_gt_act, self.num_heads, rh, rw, 2)
+            # reprojection loss
+            head_emb_dim = self.embed_dims // self.num_heads
+            query_gt_act = (sample_to_act @ query_samples.flatten(1)).reshape(
+                num_gt_act, self.num_heads, 1, head_emb_dim)
+            # (num_gt_act, num_head, 1, h_out * w_out) = (num_gt_act, num_head, 1, head_emb_dim)
+            # @ (num_gt_act, num_head, head_emb_dim, h_out * w_out)
+            attn_gt_act = query_gt_act @ key_roi.reshape(
+                num_gt_act, self.num_heads, head_emb_dim, rh * rw) / np.sqrt(head_emb_dim)
+            attn_gt_act = attn_gt_act.reshape(num_gt_act, self.num_heads, rh, rw)
+            attn_gt_act_logsoftmax = logsoftmax_across_rois(
+                attn_gt_act, rois_act, extra_dim=1)
+
+            # proj loss
+            if self.loss_proj is not None:
+                losses.update(
+                    {'loss_proj': self.loss_proj(
+                        proj_error, 0,
+                        rois=rois_act,
+                        logstd=logstd_roi.reshape(proj_error.size()),
+                        logmixweight=attn_gt_act_logsoftmax,
+                        avg_factor=max(reduce_mean(proj_error.new_tensor(num_gt_act)), 1.0) * rh * rw)})  
+            # regr loss
+            if self.loss_regr is not None:
+                x3d_tgt = x2d_roi.new_zeros((num_gt_act, rh * rw, 4))
+                roi_wh = x2d_roi.new_tensor([rw, rh])
+                for i, act_ind in enumerate(gt_active_inds):
+                    gt_x3d_act = gt_x3d_[act_ind]  # (pn, 3)
+                    gt_x3d_act = F.pad(gt_x3d_act, [0, 1], mode='constant', value=1.0)
+                    gt_x2d_act = gt_x2d_[act_ind]  # (pn, 2)
+                    gt_x2dtrans_act = F.pad(gt_x2d_act, [0, 1], mode='constant', value=1.0) \
+                                      @ img_transform[gt_img_inds[act_ind]].transpose(-1, -2)
+                    gt_x2dtrans_act = gt_x2dtrans_act[:, :2] / gt_x2dtrans_act[:, 2:]  # (pn, 2)
+                    gt_x2droi_act = (gt_x2dtrans_act - rois[act_ind, 1:3]) \
+                                    / (rois[act_ind, 3:5] - rois[act_ind, 1:3])
+                    roi_inds = (gt_x2droi_act * roi_wh - 0.5).round().long()  # (pn, 2)
+                    roi_inds = torch.min(roi_inds.clamp(min=0), roi_wh.long() - 1)
+                    roi_inds = roi_inds[:, 1] * rw + roi_inds[:, 0]  # (pn, )
+                    x3d_tgt[i].scatter_(dim=0, index=roi_inds[:, None].expand(-1, 4),
+                                        src=gt_x3d_act, reduce='add')
+                x3d_tgt_weight = x3d_tgt[..., 3].clamp(max=1.0)  # 0, 1 binary mask (num_gt_act, rh * rw)
+                x3d_tgt = x3d_tgt[..., :3] / x3d_tgt[..., 3:].clamp(min=1.0)  # (num_gt_act, rh * rw, 3)
+
+                x3d_error = (x3d_roi.reshape(num_gt_act, self.num_heads, rh, rw, 3)
+                             - x3d_tgt.reshape(num_gt_act, 1, rh, rw, 3)
+                             ) / gt_bboxes_3d_act[:, :3].mean(dim=-1).reshape(num_gt_act, 1, 1, 1, 1)
+                x3d_logweight = attn_gt_act.reshape(
+                    num_gt_act, self.num_heads, rh, rw
+                ).log_softmax(dim=1)
+                losses.update(
+                    {'loss_regr': self.loss_regr(
+                        x3d_error, 0,
+                        logmixweight=x3d_logweight,
+                        weight=x3d_tgt_weight.reshape(num_gt_act, rh, rw),
+                        avg_factor=reduce_mean(x3d_tgt_weight.sum()).clamp(min=1e-4))})
+        
+        self.save_loss(losses,'loss_fine_tune.txt')
+        return losses
     def save_loss(self,loss_dict, output_file):
         """
         Save loss keys and values to a single line for each iteration in a text file.
