@@ -172,30 +172,39 @@ model = dict(
         mc_scoring_ratio=0.0,  # 1.0 for Monte Carlo scoring
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
-dataset_type = 'NuScenes3DDataset'
+dataset_type = 'Intersection'
 data_root = 'data/nuscenes/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
-    dict(type='LoadImageFromFile3D',
-         with_img_dense_x2d=True),
-    dict(type='LoadAnnotations3D',
-         with_bbox=True,
-         with_label=True,
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations3DInt',
          with_bbox_3d=True,
-         with_coord_3d=True,
-         with_truncation=True,
-         with_attr=True,
-         with_velo=True),
-    dict(type='RandomFlip3D', flip_ratio=0.5),
-    dict(type='Crop3D', crop_box=(0, 228, 1600, 900), trunc_ignore_thres=0.8),
+         with_bbox_2d=True,
+         with_labels=True,
+         with_center=True,
+         with_K = True,
+         with_pts3d=True,
+         with_transform=True,
+         with_img_dense_x2d=True),
+    dict(type='Crop3DInt', crop_box=(0, 228, 1600, 900), trunc_ignore_thres=0.8),
     dict(type='Normalize', **img_norm_cfg),
-    dict(type='Pad3D', size_divisor=32),
-    dict(type='DefaultFormatBundle3D'),
+    dict(type='Pad3DInt', size_divisor=32),
+    dict(type='DefaultFormatBundle3DInt'),
     dict(type='Collect',
-         keys=['img', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels',
-               'gt_bboxes_3d', 'img_dense_x2d', 'img_dense_x2d_mask', 'cam_intrinsic',
-               'gt_attr', 'gt_velo', 'gt_x3d', 'gt_x2d', 'cam_pts_uvz', 'img_transform']),
+         keys=['img',
+               'gt_bboxes_3d',
+               'gt_bboxes_2d',
+               'gt_center_2d',
+               'gt_labels',
+               'cam_intrinsic',
+               'gt_x3d',
+               'gt_x2d',
+               'img_transform',
+               'img_dense_x2d',
+               'img_dense_x2d_mask'],
+        meta_keys=('filename', 'ori_filename', 'ori_shape',
+                            'img_shape', 'pad_shape','img_norm_cfg')),
 ]
 test_pipeline = [
     dict(type='LoadImageFromFile3D',
@@ -214,29 +223,21 @@ test_pipeline = [
          ])
 ]
 data = dict(
-    samples_per_gpu=6,
+    samples_per_gpu=1,
     workers_per_gpu=1,
     train=dict(
         type=dataset_type,
-        ann_file='nuscenes_annotations_val.pkl',
+        ann_file='train.json',
         pipeline=train_pipeline,
         data_root=data_root,
-        trunc_ignore_thres=0.8,
-        min_visibility=2,
+        img_prefix='/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2',
         filter_empty_gt=True),
     val=dict(
-        type=dataset_type,
-        samples_per_gpu=6,
+        type='NuScenes3DDataset',
+        samples_per_gpu=4,
         ann_file='nuscenes_annotations_val.pkl',
         pipeline=test_pipeline,
-        data_root=data_root,
-        filter_empty_gt=False),
-    test=dict(
-        type=dataset_type,
-        samples_per_gpu=6,
-        ann_file='nuscenes_annotations_test.pkl',
-        pipeline=test_pipeline,
-        data_root=data_root,
+        data_root='data/nuscenes/',
         filter_empty_gt=False))
 evaluation = dict(
     interval=1,
@@ -257,11 +258,11 @@ optimizer_config = dict(
 lr_config = dict(
     policy='step',
     step=[9, 11])
-runner = dict(type='EpochBasedRunner', max_epochs=12)
+runner = dict(type='EpochBasedRunner', max_epochs=7)
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
-    interval=40,
+    interval=1,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')
@@ -269,7 +270,9 @@ log_config = dict(
 # yapf:enable
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-load_from = None
+load_from = '/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/checkpoints/epropnp_det_v2.pth'
 resume_from = None
-workflow = [('train', 1)]
+workflow = [('train',1)]
 custom_hooks = [dict(type='EmptyCacheHook')]
+find_unused_parameters = True
+
