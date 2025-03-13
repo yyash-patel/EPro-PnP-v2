@@ -28,7 +28,7 @@ def parse_args():
         nargs='+',
         help='ids of gpus to use')
     parser.add_argument(
-        '--show-score-thr', type=float, default=0.3, help='bbox score threshold for visialization')
+        '--show-score-thr', type=float, default=0.2, help='bbox score threshold for visialization')
     parser.add_argument(
         '--show-views',
         type=str,

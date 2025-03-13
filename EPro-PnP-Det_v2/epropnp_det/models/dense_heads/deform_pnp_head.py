@@ -1156,8 +1156,6 @@ class DeformPnPHead(BaseDenseHead):
     
         gt_bboxes_ = torch.cat(gt_bboxes_2d, dim=0)
         gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
-        # gt_center_2d_ = torch.cat(gt_center_2d, dim=0)
-        
         gt_labels_ = torch.cat(gt_labels, dim=0)
         
         gt_img_inds = []
@@ -1174,7 +1172,7 @@ class DeformPnPHead(BaseDenseHead):
         # num_obj_per_img = [len(gt_labels_)]
         gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
         gt_labels_ = gt_labels_[valid_mask]
-
+        
         if self.loss_regr is not None:
             assert gt_x3d is not None and gt_x2d is not None
             gt_x3d_ = []
@@ -1230,7 +1228,7 @@ class DeformPnPHead(BaseDenseHead):
             flatten_bbox_targets,
             flatten_centerness_targets,
             centers2d_)
-    
+
         # ===== obj sampling =====
         num_img = key.size(0)
         num_obj_samples = getattr(self.train_cfg, 'num_obj_samples_per_img', 48) * num_img
@@ -1275,9 +1273,7 @@ class DeformPnPHead(BaseDenseHead):
             weight=sample_weights,
             avg_factor=num_obj_samples)
         losses.update(loss_pose=loss_pose)
-        print(img_metas)
-        print(x2d)
-        hihu
+ 
         # ===== 3d score loss & derivative regularization loss =====
         if num_obj_actual > 0:
             pose_opt, _, _, pose_opt_plus = self.pnp(
@@ -1395,7 +1391,7 @@ class DeformPnPHead(BaseDenseHead):
                 x3d_tgt = x2d_roi.new_zeros((num_gt_act, rh * rw, 4))
                 roi_wh = x2d_roi.new_tensor([rw, rh])
                 for i, act_ind in enumerate(gt_active_inds):
-                    gt_x3d_act = gt_x3d_[act_ind]  # (pn, 3)
+                    gt_x3d_act = gt_x3d_[act_ind].to(torch.float32)  # (pn, 3)
                     gt_x3d_act = F.pad(gt_x3d_act, [0, 1], mode='constant', value=1.0)
                     gt_x2d_act = gt_x2d_[act_ind]  # (pn, 2)
                     gt_x2dtrans_act = F.pad(gt_x2d_act, [0, 1], mode='constant', value=1.0) \
@@ -1423,8 +1419,8 @@ class DeformPnPHead(BaseDenseHead):
                         logmixweight=x3d_logweight,
                         weight=x3d_tgt_weight.reshape(num_gt_act, rh, rw),
                         avg_factor=reduce_mean(x3d_tgt_weight.sum()).clamp(min=1e-4))})
-        
-        self.save_loss(losses,'loss_fine_tune.txt')
+        # self.save_outputs(x2d,img_metas,'training_output_1.txt')
+        # self.save_loss(losses,'loss_fine_tune.txt')
         return losses
     def save_loss(self,loss_dict, output_file):
         """

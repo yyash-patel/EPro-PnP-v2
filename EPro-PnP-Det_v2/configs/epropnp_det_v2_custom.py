@@ -172,7 +172,7 @@ model = dict(
         mc_scoring_ratio=0.0,  # 1.0 for Monte Carlo scoring
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
-dataset_type = 'Intersection3ddataset'
+dataset_type = 'Intersection'
 data_root = 'data/int_2/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
