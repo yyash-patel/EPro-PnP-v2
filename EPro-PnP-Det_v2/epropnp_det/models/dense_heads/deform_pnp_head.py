@@ -550,7 +550,7 @@ class DeformPnPHead(BaseDenseHead):
                     x3d, x2d, w2d, self.camera, self.cost_fun, fast_mode=pnp_fast_mode)[0]
         if default_timers['PnP batch size'].enabled:
             default_timers['PnP batch size'].times.append(x3d.size(0))
-
+        debug.append('pts')
         with default_timers['post-proc. time']:
             if mc_scoring_ratio > 0:
                 if self.score_type == 'te':

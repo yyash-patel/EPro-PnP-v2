@@ -215,6 +215,7 @@ def main():
         outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                   args.show_score_thr, enable_timer=args.timer,
                                   **kwargs)
+        hj
     else:
         model = MMDistributedDataParallel(
             model.cuda(),

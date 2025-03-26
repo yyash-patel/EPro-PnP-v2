@@ -104,7 +104,7 @@ class EProPnPDet(SingleStageDetector):
                     show=False,
                     wait_time=0,
                     out_file=None,
-                    views=['2d', '3d', 'bev']):
+                    views=['2d', '3d','pts']):
         img = mmcv.imread(img)
         ori_img = mmcv.imread(ori_img)
         img_show = []
@@ -181,8 +181,8 @@ class EProPnPDet(SingleStageDetector):
                 num_head = self.bbox_head.num_heads
                 pts_obj, pts_head, pts_xy = deformable_point_vis(
                     ori_img, result, score_thr, num_head)
-                mmcv.imwrite(pts_obj, out_file[:-4] + '_pts_obj.jpg')
-                mmcv.imwrite(pts_head, out_file[:-4] + '_pts_head.jpg')
+                # mmcv.imwrite(pts_obj, out_file[:-4] + '_pts_obj.jpg')
+                # mmcv.imwrite(pts_head, out_file[:-4] + '_pts_head.jpg')
                 mmcv.imwrite(pts_xy, out_file[:-4] + '_pts_xy.jpg')
             if 'orient' in views:
                 assert 'orient_logprob' in result and 'bbox_results' in result

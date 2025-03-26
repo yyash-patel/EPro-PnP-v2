@@ -322,6 +322,8 @@ def batched_bev_nms(bbox_3d, batch_inds, nms_thr=0.25):
         keep_inds = nms_gpu(
             boxes_for_nms, bbox_3d[:, 7], nms_thr)
     else:
-        keep_inds = bbox_3d.new_zeros(0, dtype=torch.int64)
+        # keep_inds = bbox_3d.new_zeros(0, dtype=torch.int64)
+        keep_inds = bbox_3d.new_zeros(1, dtype=torch.int64)
+
     bbox_3d_out = bbox_3d[keep_inds]
     return bbox_3d_out, keep_inds

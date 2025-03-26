@@ -299,12 +299,14 @@ class Intersection(CustomDataset):
                 class_cat = car['car_name']
 
                 extracted_name = frame_name.rsplit(".", 1)[0]
-                mask_full = f"/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2/{extracted_name}_{class_cat}_full.png"
+                mask_full = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_full.png"
                 mask_full = cv2.imread(mask_full)
-                mask_occlusion = f"/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2/{extracted_name}_{class_cat}_occlusion.png"
+                mask_occlusion = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_occlusion.png"
                 mask_occlusion = cv2.imread(mask_occlusion)
                 iou = self.compute_mask_overlap(mask_full,mask_occlusion)
-                if iou > 0.8:
+                if iou > 0.4:
+                # if 0.6 <= iou <=0.8:
+
                     if class_cat[:3] in ('Car', 'Pol', 'Jee', 'Tax'):
                         label_id = 0
                         # gt_labels.append(0)  
