@@ -49,6 +49,19 @@ class EProPnPDet(SingleStageDetector):
     def simple_test(self, img, img_metas, rescale=False, **kwargs):
         with default_timers['backbone time']:
             x = self.extract_feat(img)
+            
+            # x0 = x[0].cpu().detach().numpy()
+            # x1 = x[1].cpu().detach().numpy() 
+            # x2 = x[2].cpu().detach().numpy() 
+            # x3 = x[3].cpu().detach().numpy() 
+            # x4 = x[4].cpu().detach().numpy()  
+            # np.save('feature_map_s0_ft.npy', x0)
+            # np.save('feature_map_s1_ft.npy', x1)
+            # np.save('feature_map_s2_ft.npy', x2)
+            # np.save('feature_map_s3_ft.npy', x3)
+            # np.save('feature_map_s4_ft.npy', x4)
+            # print(x0.shape, x1.shape,x2.shape,x3.shape,x4.shape)
+            # cfrvgbh
         return self.bbox_head.simple_test(x, img_metas, **kwargs)
 
     def aug_test(self, imgs, img_metas, rescale=False, **kwargs):
@@ -110,7 +123,7 @@ class EProPnPDet(SingleStageDetector):
         img_show = []
         if '3d' in views:
             img_pred_3d = ori_img.copy()
-            draw_box_3d_pred(
+            bbox3d_list, projected_corners_list = draw_box_3d_pred(
                 img_pred_3d,
                 result['bbox_3d_results'],
                 cam_intrinsic,
@@ -149,22 +162,27 @@ class EProPnPDet(SingleStageDetector):
                 mmcv.imwrite(img_pred_3d, out_file[:-4] + '_3d.jpg')
             if 'bev' in views:
                 mmcv.imwrite(viz_bev, out_file[:-4] + '_bev.png')
-            # if '2d' in views:
-            #     assert 'bbox_results' in result
-            #     multi_cls_results = np.concatenate(result['bbox_results'], axis=0)
-            #     labels = []
-            #     for i, bbox_single in enumerate(result['bbox_results']):
-            #         labels += [i] * bbox_single.shape[0]
-            #     labels = np.array(labels)
-            #     imshow_det_bboxes(
-            #         ori_img,
-            #         multi_cls_results,
-            #         labels,
-            #         class_names=self.CLASSES,
-            #         score_thr=score_thr,
-            #         thickness=thickness,
-            #         show=False,
-            #         out_file=out_file[:-4] + '_2d.jpg')
+            if '2d' in views:
+                assert 'bbox_results' in result
+                multi_cls_results = np.concatenate(result['bbox_results'], axis=0)
+                labels = []
+                for i, bbox_single in enumerate(result['bbox_results']):
+                    labels += [i] * bbox_single.shape[0]
+                labels = np.array(labels)
+              
+                self.CLASSES = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
+               'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
+               'barrier')
+                
+                imshow_det_bboxes(
+                    ori_img,
+                    multi_cls_results,
+                    labels,
+                    class_names=self.CLASSES,
+                    score_thr=score_thr,
+                    thickness=thickness,
+                    show=False,
+                    out_file=out_file[:-4] + '_2d.jpg')
             if 'score' in views:
                 assert 'score' in result
                 score = result['score'][:, :img.shape[0], :img.shape[1]].sum(axis=0)
@@ -214,4 +232,5 @@ class EProPnPDet(SingleStageDetector):
                         plt.close()
 
         if not (show or out_file):
-            return img_show
+            return img_show, bbox3d_list, projected_corners_list
+        return bbox3d_list, multi_cls_results

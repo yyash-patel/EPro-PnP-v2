@@ -235,7 +235,10 @@ from scipy.spatial.transform import Rotation as R
 
 @DATASETS.register_module()
 class Intersection(CustomDataset):
-    CLASSES = ('car', 'taxi')  # Include other vehicle types as necessary
+    # CLASSES = ('car', 'taxi')  # Include other vehicle types as necessary
+    CLASSES = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
+               'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
+               'barrier')
     extrinsic = np.eye(4)
     # rotation = np.array([[0.719   ,   - 0.0043,    -0.69],
     #                      [0.0145 ,   -0.9997 ,   0.0212],
@@ -299,9 +302,9 @@ class Intersection(CustomDataset):
                 class_cat = car['car_name']
 
                 extracted_name = frame_name.rsplit(".", 1)[0]
-                mask_full = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_full.png"
+                mask_full = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/scene_linear/{extracted_name}_{class_cat}_full.png"
                 mask_full = cv2.imread(mask_full)
-                mask_occlusion = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_occlusion.png"
+                mask_occlusion = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/scene_linear/{extracted_name}_{class_cat}_occlusion.png"
                 mask_occlusion = cv2.imread(mask_occlusion)
                 iou = self.compute_mask_overlap(mask_full,mask_occlusion)
                 if iou > 0.4:

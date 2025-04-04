@@ -77,7 +77,7 @@ def main():
     for img_filename in track_iter_progress(img_list):
         result, data = inference_detector(
             model, [os.path.join(image_dir, img_filename)], cam_mat)
-        show_result(
+        _,_=show_result(
             model, result, data,
             show=False, out_dir=show_dir, show_score_thr=args.show_score_thr,
             **kwargs)

@@ -66,7 +66,7 @@ def show_result(model, result, data,
         else:
             out_file = None
 
-        model.show_result(
+        bbox_3d_list, bbox_2d_list = model.show_result(
             img_show,
             result[j],
             show=show,
@@ -77,7 +77,7 @@ def show_result(model, result, data,
             out_file=out_file,
             score_thr=show_score_thr,
             **kwargs)
-
+        return bbox_3d_list, bbox_2d_list
 
 def init_detector(config, checkpoint=None, device='cuda:0', cfg_options=None):
     if isinstance(config, str):

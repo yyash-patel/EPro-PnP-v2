@@ -161,9 +161,12 @@ def draw_box_3d_pred(image, bbox_3d_results, cam_intrinsic, score_thr=0.1, z_cli
     bbox_3d_results = np.concatenate(bbox_3d_results, axis=0)
     sort_idx = np.argsort(bbox_3d_results[:, 5])[::-1]
     bbox_3d_results = bbox_3d_results[sort_idx]
+    bbox_3d_list = []
+    projected_corners_list = []
     for bbox_3d in bbox_3d_results:
         if bbox_3d[7] < score_thr:
             continue
+        bbox_3d_list.append(bbox_3d[:8])
         corners, edge_idx = compute_box_3d(bbox_3d)
         corners_in_front = corners[:, 2] >= z_clip
         edges_0_in_front = corners_in_front[edge_idx[:, 0]]
@@ -179,6 +182,7 @@ def draw_box_3d_pred(image, bbox_3d_results, cam_intrinsic, score_thr=0.1, z_cli
                              axis=0)  # (n, 2, 2)
             cv2.polylines(image, lines, False, color,
                           thickness=thickness, shift=3)
+            projected_corners_list.append(corners_2d)
         # compute intersection
         edges_clipped = edges_0_in_front ^ edges_1_in_front
         if np.any(edges_clipped):
@@ -200,7 +204,8 @@ def draw_box_3d_pred(image, bbox_3d_results, cam_intrinsic, score_thr=0.1, z_cli
             lines = np.stack([keep_2d, intersection_2d], axis=1)  # (n, 2, 2)
             cv2.polylines(image, lines, False, color,
                           thickness=thickness, shift=3)
-    return
+            projected_corners_list.append(corners_2d)
+    return bbox_3d_list, projected_corners_list
 
 
 def proj_to_img(pts, proj_mat, z_clip=1e-4):

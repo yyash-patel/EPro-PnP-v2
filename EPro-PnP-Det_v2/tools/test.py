@@ -215,7 +215,6 @@ def main():
         outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                   args.show_score_thr, enable_timer=args.timer,
                                   **kwargs)
-        hj
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
@@ -241,6 +240,7 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
+            print(eval_kwargs)
             print(dataset.evaluate(outputs, **eval_kwargs))
 
 
