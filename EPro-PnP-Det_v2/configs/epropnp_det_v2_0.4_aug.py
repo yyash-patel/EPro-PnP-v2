@@ -173,7 +173,7 @@ model = dict(
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
 dataset_type = 'Intersection'
-data_root = 'data/int_2/'
+data_root = 'data/int_3/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
@@ -227,10 +227,10 @@ data = dict(
     workers_per_gpu=1,
     train=dict(
         type=dataset_type,
-        ann_file='train.json',
+        ann_file='cam_aug.json',
         pipeline=train_pipeline,
         data_root=data_root,
-        img_prefix='/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2',
+        img_prefix='/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3',
         filter_empty_gt=True),
     val=dict(
         type='NuScenes3DDataset',

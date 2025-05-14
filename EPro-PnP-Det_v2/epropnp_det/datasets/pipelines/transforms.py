@@ -537,13 +537,18 @@ class Pad3D(Pad):
         self._pad_dense(results)
         return results
 
-
 def crop_3d(results, crop_box, bbox2mask, bbox2label, bbox2bbox_3d,
             allow_negative_crop=False, trunc_ignore_thres=-1.0):
     crop_x1, crop_y1, crop_x2, crop_y2 = crop_box
     # crop the image
     img = results['img']
-    img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
+    # h,w,_ = img.shape
+    # w_32 = (h // 32) * 32
+    # crop_x1, crop_y1, crop_x2, crop_y2 = 0, h-w_32, h, w
+    img = img[crop_y1:crop_y2,:]
+    # print(img.shape)
+    # poo
+    # img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
     img_shape = img.shape
     results['img'] = img
     results['img_shape'] = img_shape
@@ -697,8 +702,12 @@ def crop_3dInt(results, crop_box):
 
     # crop the image
     img = results['img']
+    # print(img.shape)
+    # h,w,_ = img.shape
+    # w_32 = (h // 32) * 32
+    # crop_x1, crop_y1, crop_x2, crop_y2 = 0, h-w_32, h, w
+    # print( crop_x1, crop_y1, crop_x2, crop_y2)
     img = img[crop_y1:crop_y2,:]
-    
     # img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
     img_shape = img.shape
 

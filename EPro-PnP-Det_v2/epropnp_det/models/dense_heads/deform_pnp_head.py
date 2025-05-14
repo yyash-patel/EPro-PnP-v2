@@ -1168,7 +1168,7 @@ class DeformPnPHead(BaseDenseHead):
          valid_mask, num_obj_per_img) = self.center_target.get_centers_2d(
             gt_bboxes_, gt_bboxes_3d_, gt_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
             cam_intrinsic, ori_shapes.max(dim=0)[0])
-
+        
         # num_obj_per_img = [len(gt_labels_)]
         gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
         gt_labels_ = gt_labels_[valid_mask]

@@ -8,9 +8,81 @@ https://github.com/tjiiv-cprg/MonoRUn
 
 import cv2
 import numpy as np
-
+import torch
 from .. import compute_box_3d
+def yaw_to_rot_mat(yaw):
+    """
+    Args:
+        yaw: (*)
 
+    Returns:
+        rot_mats: (*, 3, 3)
+    """
+    if isinstance(yaw, torch.Tensor):
+        pkg = torch
+        device_kwarg = dict(device=yaw.device)
+    else:
+        pkg = np
+        device_kwarg = dict()
+    sin_yaw = pkg.sin(yaw)
+    cos_yaw = pkg.cos(yaw)
+    # [[ cos_yaw, 0, sin_yaw],
+    #  [       0, 1,       0],
+    #  [-sin_yaw, 0, cos_yaw]]
+    rot_mats = pkg.zeros(yaw.shape + (3, 3), dtype=pkg.float32, **device_kwarg)
+    rot_mats[..., 0, 0] = cos_yaw
+    rot_mats[..., 2, 2] = cos_yaw
+    rot_mats[..., 0, 2] = sin_yaw
+    rot_mats[..., 2, 0] = -sin_yaw
+    rot_mats[..., 1, 1] = 1
+    return rot_mats
+def compute_box_3d1(bbox_3d):
+    """
+    Args:
+        bbox_3d: (*, 7)
+
+    Returns:
+        corners: (*, 8, 3)
+        edge_corner_idx: (12, 2)
+    """
+    bs = bbox_3d.shape[:-1]
+    rotation_matrix = yaw_to_rot_mat(bbox_3d[..., 6])  # (*bs, 3, 3)
+    c = np.cos(0.367)
+    s = np.sin(0.367)
+    
+    rot_x = np.array([
+        [1,  0,  0],
+        [0,  c, -s],
+        [0,  s,  c]
+    ])
+    rotation_matrix = (rot_x  @  rotation_matrix.reshape(3,3)).reshape(1,3,3)
+    edge_corner_idx = np.array([[0, 1],
+                         [1, 2],
+                         [2, 3],
+                         [3, 0],
+                         [4, 5],
+                         [5, 6],
+                         [6, 7],
+                         [7, 4],
+                         [0, 4],
+                         [1, 5],
+                         [2, 6],
+                         [3, 7]])
+    corners = np.array([[ 0.5,  0.5,  0.5],
+                        [ 0.5,  0.5, -0.5],
+                        [-0.5,  0.5, -0.5],
+                        [-0.5,  0.5,  0.5],
+                        [ 0.5, -0.5,  0.5],
+                        [ 0.5, -0.5, -0.5],
+                        [-0.5, -0.5, -0.5],
+                        [-0.5, -0.5,  0.5]], dtype=np.float32)
+    if isinstance(bbox_3d, torch.Tensor):
+        edge_corner_idx = torch.from_numpy(edge_corner_idx).to(device=bbox_3d.device)
+        corners = torch.from_numpy(corners).to(device=bbox_3d.device)
+    corners = corners * bbox_3d[..., None, :3]  # (*bs, 8, 3)
+    corners = (rotation_matrix[..., None, :, :] @ corners[..., None]).reshape(*bs, 8, 3) \
+              + bbox_3d[..., None, 3:6]
+    return corners, edge_corner_idx
 
 def compute_box_bev(label, with_arrow=True):
     ry = label[6]

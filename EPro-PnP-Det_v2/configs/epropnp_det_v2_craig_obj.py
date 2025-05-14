@@ -172,8 +172,8 @@ model = dict(
         mc_scoring_ratio=0.0,  # 1.0 for Monte Carlo scoring
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
-dataset_type = 'Intersection'
-data_root = 'data/int_2/'
+dataset_type = 'craig_syn'
+data_root = '/simplstor/ypatel/datasets/CRAIG/rendered_images'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
@@ -187,7 +187,7 @@ train_pipeline = [
          with_pts3d=True,
          with_transform=True,
          with_img_dense_x2d=True),
-    dict(type='Crop3DInt', crop_box=(0, 318, 990, 990)),
+    dict(type='Crop3DInt', crop_box=(0, 60, 1500, 2000)),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad3DInt', size_divisor=32),
     dict(type='DefaultFormatBundle3DInt'),
@@ -227,10 +227,10 @@ data = dict(
     workers_per_gpu=1,
     train=dict(
         type=dataset_type,
-        ann_file='train.json',
+        ann_file='craig_synthetic.json',
         pipeline=train_pipeline,
         data_root=data_root,
-        img_prefix='/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_2',
+        img_prefix='/simplstor/ypatel/datasets/CRAIG/rendered_images',
         filter_empty_gt=True),
     val=dict(
         type='NuScenes3DDataset',
@@ -258,7 +258,7 @@ optimizer_config = dict(
 lr_config = dict(
     policy='step',
     step=[9, 11])
-runner = dict(type='EpochBasedRunner', max_epochs=6)
+runner = dict(type='EpochBasedRunner', max_epochs=7)
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -271,7 +271,7 @@ log_config = dict(
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 load_from = '/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/checkpoints/epropnp_det_v2.pth'
-resume_from = '/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/work_dirs/epropnp_det_v2_0.6/epoch_5.pth'
+resume_from = None
 workflow = [('train',1)]
 custom_hooks = [dict(type='EmptyCacheHook')]
 find_unused_parameters = True
