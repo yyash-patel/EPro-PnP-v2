@@ -546,8 +546,7 @@ def crop_3d(results, crop_box, bbox2mask, bbox2label, bbox2bbox_3d,
     # w_32 = (h // 32) * 32
     # crop_x1, crop_y1, crop_x2, crop_y2 = 0, h-w_32, h, w
     img = img[crop_y1:crop_y2,:]
-    # print(img.shape)
-    # poo
+
     # img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
     img_shape = img.shape
     results['img'] = img
@@ -714,8 +713,8 @@ def crop_3dInt(results, crop_box):
     results['img'] = img
     results['img_shape'] = img_shape
 
-    results['img_dense_x2d'] = results['img_dense_x2d'][crop_y1:crop_y2, crop_x1:crop_x2]
-    results['img_dense_x2d_mask'] = results['img_dense_x2d_mask'][crop_y1:crop_y2, crop_x1:crop_x2]
+    results['img_dense_x2d'] = results['img_dense_x2d'][crop_y1:crop_y2,:]
+    results['img_dense_x2d_mask'] = results['img_dense_x2d_mask'][crop_y1:crop_y2,:]
 
     # for key in results.get('dense_fields', []):
     #     print(key)

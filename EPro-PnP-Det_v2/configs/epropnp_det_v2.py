@@ -205,7 +205,7 @@ test_pipeline = [
          flip=False,
          transforms=[
              dict(type='RandomFlip3D', flip_ratio=0.5),
-             dict(type='Crop3D', crop_box=(0, 60, 1500, 2000)),
+             dict(type='Crop3D', crop_box=(0, 12,370,1224)),
              dict(type='Normalize', **img_norm_cfg),
              dict(type='Pad3D', size_divisor=32),
              dict(type='DefaultFormatBundle3D'),

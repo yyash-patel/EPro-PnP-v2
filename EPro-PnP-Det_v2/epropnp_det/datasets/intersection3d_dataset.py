@@ -302,9 +302,9 @@ class Intersection(CustomDataset):
                 class_cat = car['car_name']
 
                 extracted_name = frame_name.rsplit(".", 1)[0]
-                mask_full = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_full.png"
+                mask_full = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/scene_linear/{extracted_name}_{class_cat}_full.png"
                 mask_full = cv2.imread(mask_full)
-                mask_occlusion = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/int_3/{extracted_name}_{class_cat}_occlusion.png"
+                mask_occlusion = f"/simplstor/ypatel/workspace/EPro-PnP-v2/EPro-PnP-Det_v2/data/scene_linear/{extracted_name}_{class_cat}_occlusion.png"
                 mask_occlusion = cv2.imread(mask_occlusion)
                 iou = self.compute_mask_overlap(mask_full,mask_occlusion)
                 if iou > 0.4:
@@ -404,7 +404,7 @@ class Intersection(CustomDataset):
                                         -yaw])
                     
                     gt_labels.append(label_id)
-                    gt_center_2d.append([obj_center[0][0],obj_center[0][1]])
+                    gt_center_2d.append([obj_center[0][0],obj_center[0][1]-self.crop_box[1]])
                     gt_x3d.append(points3d_in_cam)
                     gt_x2d.append(projected_x2d)
 

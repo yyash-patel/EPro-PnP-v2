@@ -173,7 +173,7 @@ model = dict(
         nms_iou2d=dict(type='nms', iou_threshold=0.8),
         nms_ioubev_thr=0.25))
 dataset_type = 'craig_syn'
-data_root = '/simplstor/ypatel/datasets/CRAIG/rendered_images'
+data_root = '/simplstor/ypatel/datasets/CRAIG_RESIZED/rendered_images'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
@@ -187,7 +187,7 @@ train_pipeline = [
          with_pts3d=True,
          with_transform=True,
          with_img_dense_x2d=True),
-    dict(type='Crop3DInt', crop_box=(0, 60, 1500, 2000)),
+    dict(type='Crop3DInt', crop_box=(0, 318, 990, 990)),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad3DInt', size_divisor=32),
     dict(type='DefaultFormatBundle3DInt'),
@@ -230,7 +230,7 @@ data = dict(
         ann_file='craig_synthetic.json',
         pipeline=train_pipeline,
         data_root=data_root,
-        img_prefix='/simplstor/ypatel/datasets/CRAIG/rendered_images',
+        img_prefix='/simplstor/ypatel/datasets/CRAIG_RESIZED/rendered_images',
         filter_empty_gt=True),
     val=dict(
         type='NuScenes3DDataset',

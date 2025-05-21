@@ -1140,7 +1140,9 @@ class DeformPnPHead(BaseDenseHead):
                       img_transform=None,
                       img_dense_x2d=None,
                       img_dense_x2d_mask=None):
-        
+        # centers2d_ = gt_center_2d[0]
+        # centers2d =gt_center_2d
+
         # ===== prepare img metas and g.t. =====
         device = mlvl_feats[0].device
         cam_intrinsic = torch.stack(cam_intrinsic, dim=0)
@@ -1150,11 +1152,12 @@ class DeformPnPHead(BaseDenseHead):
         ori_shapes = cam_intrinsic.new_tensor([img_meta['ori_shape'][:2] for img_meta in img_metas])
         img_dense_x2d_small = F.avg_pool2d(img_dense_x2d, self.output_stride, self.output_stride)
         img_dense_x2d_mask_small = F.avg_pool2d(img_dense_x2d_mask, self.output_stride, self.output_stride)
-        
+
         gt_bboxes_2d[0] = gt_bboxes_2d[0].view(-1, 4) 
+
         img_flips = torch.zeros(len(gt_bboxes_2d), dtype=torch.bool)
-    
         gt_bboxes_ = torch.cat(gt_bboxes_2d, dim=0)
+     
         gt_bboxes_3d_ = torch.cat(gt_bboxes_3d, dim=0)
         gt_labels_ = torch.cat(gt_labels, dim=0)
         
@@ -1162,17 +1165,22 @@ class DeformPnPHead(BaseDenseHead):
         for i, gt_bboxes_3d_single in enumerate(gt_bboxes_3d):
             gt_img_inds += [i] * gt_bboxes_3d_single.size(0)
         gt_img_inds = torch.tensor(gt_img_inds, device=device, dtype=torch.long)
-
+       
         # ===== get center targets and filter g.t. boxes =====
         (centers2d_, gt_bboxes_, centers2d, gt_bboxes_2d,
          valid_mask, num_obj_per_img) = self.center_target.get_centers_2d(
             gt_bboxes_, gt_bboxes_3d_, gt_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
-            cam_intrinsic, ori_shapes.max(dim=0)[0])
+            cam_intrinsic, ori_shapes.max(dim=0)[0],img_metas[0]['filename'])
+        # # fb
+        # print(centers2d)
         
         # num_obj_per_img = [len(gt_labels_)]
+      
+        # valid_mask = torch.ones(len(gt_labels_),device=device,  dtype=torch.bool)
+
         gt_bboxes_3d_ = gt_bboxes_3d_[valid_mask]
         gt_labels_ = gt_labels_[valid_mask]
-        
+      
         if self.loss_regr is not None:
             assert gt_x3d is not None and gt_x2d is not None
             gt_x3d_ = []
@@ -1228,7 +1236,13 @@ class DeformPnPHead(BaseDenseHead):
             flatten_bbox_targets,
             flatten_centerness_targets,
             centers2d_)
+        # print(centers2d_)
+        # if losses['loss_centerness']==0:
+        with open("filenames.txt", "a") as f:
+                f.write(f"{img_metas[0]['filename']},'loss_center', {losses['loss_centerness']}, 'center_2d', {centers2d_}, \n")
 
+            # print(img_metas)
+        
         # ===== obj sampling =====
         num_img = key.size(0)
         num_obj_samples = getattr(self.train_cfg, 'num_obj_samples_per_img', 48) * num_img

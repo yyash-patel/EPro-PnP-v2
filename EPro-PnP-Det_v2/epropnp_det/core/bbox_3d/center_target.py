@@ -42,7 +42,7 @@ class VolumeCenter(object):
         self.max_gpu_obj = max_gpu_obj
 
     def get_centers_2d(self, bboxes_2d, bboxes_3d, obj_img_inds, img_dense_x2d_small, img_dense_x2d_mask_small,
-                       cam_intrinsic, max_shape):
+                       cam_intrinsic, max_shape,name):
         """
         Args:
             bboxes_2d (torch.Tensor): (num_obj, 4)
@@ -138,7 +138,7 @@ class VolumeCenter(object):
             obj_img_inds_new = obj_img_inds_new.cpu()
         centers_2d, bboxes_2d, valid_mask = self.post_proc(
             zbuf, pix_to_face, img_dense_x2d_small, img_dense_x2d_mask_small,
-            pad_shape, num_obj, obj_img_inds_new, bboxes_2d, fn)
+            pad_shape, num_obj, obj_img_inds_new, bboxes_2d, fn,name)
         centers_2d = centers_2d.to(device)
         bboxes_2d = bboxes_2d.to(device)
         valid_mask = valid_mask.to(device)
@@ -155,7 +155,7 @@ class VolumeCenter(object):
         return centers_2d, bboxes_2d, centers_2d_list, bboxes_2d_list, valid_mask, num_obj_per_img_list
 
     def post_proc(self, zbuf, pix_to_face, img_dense_x2d_small, img_dense_x2d_mask_small,
-                  pad_shape, num_obj, obj_img_inds, bboxes_2d, fn):
+                  pad_shape, num_obj, obj_img_inds, bboxes_2d, fn,name):
         num_img, h_rend, w_rend, _ = zbuf.size()
         device = zbuf.device
 
@@ -191,6 +191,13 @@ class VolumeCenter(object):
         obj_z_thickness = obj_z_near_far[..., 1] - obj_z_near_far[..., 0]  # (num_obj, h_rend, w_rend)
         obj_z_thickness *= obj_valid_mask
         assert (obj_z_thickness[obj_valid_mask] >= 0).all()
+        import os 
+        # import cv2
+        filename = os.path.basename(name)
+        # mask_ = obj_z_thickness.squeeze(0).cpu().numpy()
+        # binary_mask = cv2.threshold(mask_, 0, 255, cv2.THRESH_BINARY)[1]
+
+        # cv2.imwrite(f'/simplstor/ypatel/workspace/EPro-PnP-v2/test/{filename}_m.png',binary_mask)
 
         # =====volumetric occlusion=====
         if self.occlusion_factor > 0:
@@ -211,10 +218,11 @@ class VolumeCenter(object):
                 index=obj_near_inds
             ).permute(2, 0, 1)
             obj_z_thickness *= torch.exp(-self.occlusion_factor * obj_occlusion_thickness)
-
+               
         # =====resampling=====
         denom = pad_shape[[1, 0]] / 2
         grid = img_dense_x2d_small.permute(0, 2, 3, 1) / denom - 1
+
         # (2 * num_obj, h_rend, w_rend)
         obj_z_thickness_mask = torch.cat([obj_z_thickness, obj_valid_mask], dim=0)
         obj_z_thickness_mask = F.grid_sample(
@@ -224,6 +232,11 @@ class VolumeCenter(object):
             mode='bilinear',
             padding_mode='zeros',
             align_corners=False)  # (num_img, 2 * num_obj, h_out, w_out)
+        # import cv2
+        # import numpy as np
+        # thickness_map = obj_z_thickness_mask[0, :, :, 0].detach().cpu().numpy()
+        # thickness_norm = cv2.normalize(thickness_map, None, 0, 255, cv2.NORM_MINMAX)
+        # thickness_uint8 = thickness_norm.astype(np.uint8)
         obj_z_thickness_mask *= img_dense_x2d_mask_small
         h_out, w_out = img_dense_x2d_small.shape[-2:]
         # (num_obj, 2, h_out, w_out)
@@ -242,6 +255,15 @@ class VolumeCenter(object):
         centers_2d = (obj_z_thickness * points).sum(dim=(-3, -2)) / weight_sum  # (num_obj, 2)
         valid_mask = (weight_sum >= 1e-6).squeeze(-1)
 
+
+        # z_np = zbuf[0, :, :, 0].cpu().numpy()
+        # z_valid = np.isfinite(z_np)
+        # z_clean = np.copy(z_np)
+        # z_clean[~z_valid] = 0 
+        # z_norm = cv2.normalize(z_clean, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+        # z_uint8 = z_norm.astype(np.uint8)
+
+        # cv2.imwrite(f'/simplstor/ypatel/workspace/EPro-PnP-v2/test/{filename}_m_after_m.png',thickness_uint8)
         if self.rend_bbox_2d:
             obj_mask = obj_z_thickness_mask[:, 1] >= 0.5  # (num_obj, h_out, w_out)
             obj_mask_w_neg = ~obj_mask.any(dim=1)  # (num_obj, w_out)

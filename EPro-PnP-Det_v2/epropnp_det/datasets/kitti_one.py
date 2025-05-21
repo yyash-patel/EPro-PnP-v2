@@ -13,12 +13,15 @@ class kitti_one_syn(CustomDataset):
                'barrier')
     extrinsic = np.eye(4)
     c_T_w = np.linalg.inv(extrinsic)
+    # intrinsic = np.array([[571.631,     0, 488.681],
+    #                             [    0,  1891.559, 482.649],
+    #                             [    0,       0,      1]])
     intrinsic = np.array([[7.070493000000e+02, 0, 6.040814000000e+02], 
                     [0, 7.070493000000e+02, 1.805066000000e+02], 
                     [0, 0, 1]])
     distCoeffs = np.zeros(5)
-    width = 370
-    height = 1224
+    width = 1224
+    height = 370
     crop_box = [0, 18, 370, 1224]
 
     def compute_mask_overlap(self, mask1, mask2):
@@ -153,10 +156,22 @@ class kitti_one_syn(CustomDataset):
                 x_values = projected_2d[:, 0]
                 y_values = projected_2d[:, 1]
                 
-                bbox_2d_xyxy = [min(x_values), 
-                                min(y_values)-self.crop_box[1], 
-                                max(x_values), 
-                                max(y_values)-self.crop_box[1]]
+                x1 = min(x_values)
+                y1 = min(y_values)-self.crop_box[1]
+                x2 = max(x_values)
+                y2 = max(y_values)-self.crop_box[1]
+                x1_clamped = max(0, int(x1))
+                y1_clamped = max(0, int(y1))
+                x2_clamped = min(self.width - 1, int(x2))
+                y2_clamped = min(self.height - 1, int(y2))
+                # bbox_2d_xyxy = [min(x_values), 
+                #                 min(y_values)-self.crop_box[1], 
+                #                 max(x_values), 
+                #                 max(y_values)-self.crop_box[1]]
+                bbox_2d_xyxy = [x1_clamped, 
+                                y1_clamped, 
+                                x2_clamped, 
+                                y2_clamped]
                 
                 if any(val < 0 for val in bbox_2d_xyxy):
                     continue
@@ -171,7 +186,7 @@ class kitti_one_syn(CustomDataset):
                                     bbox_3d_yaw])
                 
                 gt_labels.append(label_id)
-                gt_center_2d.append([obj_center[0][0],obj_center[0][1]])
+                gt_center_2d.append([obj_center[0][0],obj_center[0][1]-self.crop_box[1]])
                 gt_x3d.append(points3d_in_cam)
                 gt_x2d.append(projected_x2d)
                 

@@ -13,13 +13,13 @@ class craig_syn(CustomDataset):
                'barrier')
     extrinsic = np.eye(4)
     c_T_w = np.linalg.inv(extrinsic)
-    intrinsic = np.array([[1155.068, 0, 1011.27], 
-                    [0, 1155.068, 712.285], 
+    intrinsic = np.array([[571.76166, 0, 500.57865], 
+                    [0,  762.343, 470.111], 
                     [0, 0, 1]])
     distCoeffs = np.zeros(5)
-    width = 1500
-    height = 2000
-    crop_box = [0, 60, 1500, 2000]
+    width = 990
+    height = 990
+    crop_box = [0, 318, 990, 990]
 
     def compute_mask_overlap(self, mask1, mask2):
         # Convert 255 values to 1 for easier calculations
@@ -140,7 +140,7 @@ class craig_syn(CustomDataset):
                                                     self.distCoeffs         
                                                     )
                 obj_center = projected_2d_center.reshape(-1, 2)
-
+                
                 # 2d bbox --------------------------------------------
                 projected_2d, _ = cv2.projectPoints(
                                                     bbox_3d_corners, 
@@ -152,12 +152,22 @@ class craig_syn(CustomDataset):
                 projected_2d = projected_2d.reshape(-1, 2)
                 x_values = projected_2d[:, 0]
                 y_values = projected_2d[:, 1]
-                
-                bbox_2d_xyxy = [min(x_values), 
-                                min(y_values)-self.crop_box[1], 
-                                max(x_values), 
-                                max(y_values)-self.crop_box[1]]
-                
+                x1 = min(x_values)
+                y1 = min(y_values)-self.crop_box[1]
+                x2 = max(x_values)
+                y2 = max(y_values)-self.crop_box[1]
+                x1_clamped = max(0, int(x1))
+                y1_clamped = max(0, int(y1))
+                x2_clamped = min(self.width - 1, int(x2))
+                y2_clamped = min(self.height - 1, int(y2))
+                # bbox_2d_xyxy = [min(x_values), 
+                #                 min(y_values)-self.crop_box[1], 
+                #                 max(x_values), 
+                #                 max(y_values)-self.crop_box[1]]
+                bbox_2d_xyxy = [x1_clamped, 
+                                y1_clamped, 
+                                x2_clamped, 
+                                y2_clamped]
                 if any(val < 0 for val in bbox_2d_xyxy):
                     continue
                 
@@ -171,10 +181,10 @@ class craig_syn(CustomDataset):
                                     bbox_3d_yaw])
                 
                 gt_labels.append(label_id)
-                gt_center_2d.append([obj_center[0][0],obj_center[0][1]])
+                gt_center_2d.append([obj_center[0][0],obj_center[0][1]-self.crop_box[1]])
                 gt_x3d.append(points3d_in_cam)
                 gt_x2d.append(projected_x2d)
-                
+  
             cam_intrinsic = self.intrinsic
             img_transform = np.array(
                                     [[1, 0, -self.crop_box[0]],

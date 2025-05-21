@@ -270,7 +270,7 @@ log_config = dict(
 # yapf:enable
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-load_from = None
+load_from = '/simplstor/ypatel/workspace/single-image-pose/external/EPro-PnP-v2/checkpoints/epropnp_det_v2.pth'
 resume_from = None
 workflow = [('train',1)]
 custom_hooks = [dict(type='EmptyCacheHook')]
